@@ -1,0 +1,42 @@
+{
+    "name": "nextdeveloper/monitoring",
+    "description": "Driver based monitoring client library for Laravel (PlusClouds, Zabbix, ...)",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.2.0",
+        "illuminate/contracts": "^10.0|^11.0|^12.0",
+        "illuminate/database": "^10.0|^11.0|^12.0",
+        "illuminate/http": "^10.0|^11.0|^12.0",
+        "illuminate/support": "^10.0|^11.0|^12.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0|^9.0|^10.0",
+        "phpunit/phpunit": "^10.0|^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "NextDeveloper\\Monitoring\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "NextDeveloper\\Monitoring\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "NextDeveloper\\Monitoring\\MonitoringServiceProvider"
+            ],
+            "aliases": {
+                "Monitoring": "NextDeveloper\\Monitoring\\Facades\\Monitoring"
+            }
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
