@@ -9,6 +9,7 @@ use DateTimeImmutable;
 use DateTimeZone;
 use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
+use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ReportsUsage;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
 use NextDeveloper\Monitoring\Contracts\ManagesSites;
@@ -41,9 +42,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers
 {
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage'];
+    /** Set by actingAs(): the user whose role applies to tenant calls. Null = the platform, with full rights in the tenant. */
+    protected ?string $actor = null;
+
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members'];
 
     public function driverName(): string
     {
@@ -128,7 +132,36 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
     /** Tenant-scoped calls act in the tenant named by its external id (the account UUID). */
     protected function tenantHeaders(string $tenantId): array
     {
-        return ['X-Tenant-External-ID' => $tenantId];
+        return array_filter(['X-Tenant-External-ID' => $tenantId, 'X-Actor-External-ID' => $this->actor]);
+    }
+
+    public function actingAs(?string $userExternalId): static
+    {
+        $copy = clone $this;
+        $copy->actor = $userExternalId;
+
+        return $copy;
+    }
+
+    /**
+     * The monitoring service addresses members by its own tenant id, not the external id we use everywhere else,
+     * so look it up first. Platform call: no tenant or actor header.
+     */
+    public function upsertMember(string $tenantId, string $userExternalId, string $role): void
+    {
+        $this->request('PUT', $this->path("tenants/{$this->serverTenantId($tenantId)}/members/by-external-id/".rawurlencode($userExternalId)), ['role' => $role]);
+    }
+
+    public function removeMember(string $tenantId, string $userExternalId): void
+    {
+        $this->request('DELETE', $this->path("tenants/{$this->serverTenantId($tenantId)}/members/by-external-id/".rawurlencode($userExternalId)));
+    }
+
+    protected function serverTenantId(string $externalId): string
+    {
+        $id = $this->getTenant($externalId)->raw['id'] ?? null;
+
+        return $id ?: throw new ApiRequestFailed("Tenant [{$externalId}] has no id on monitoring server [{$this->server->name}].", 404);
     }
 
     /** Hosts are devices on the monitoring server. Filters: type, site_id, parent_id, tag (k=v). */

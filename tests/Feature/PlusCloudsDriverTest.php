@@ -222,7 +222,7 @@ class PlusCloudsDriverTest extends TestCase
 
     public function test_push_is_unsupported_and_capabilities_listed(): void
     {
-        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage'] as $capability) {
+        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members'] as $capability) {
             $this->assertTrue($this->driver->supports($capability), $capability);
         }
         $this->assertFalse($this->driver->supports('push'));
@@ -327,6 +327,35 @@ class PlusCloudsDriverTest extends TestCase
 
         $this->assertFalse($webhook->enabled);
         $this->assertSame('receiver answered 410 Gone', $webhook->disabledReason);
+    }
+
+    public function test_acting_as_adds_actor_header_to_tenant_calls_without_changing_the_original(): void
+    {
+        $this->fake(['*' => Http::response(['items' => [], 'next_cursor' => null])]);
+
+        $this->driver->actingAs('user-uuid')->listHosts(self::TENANT);
+        $this->assertSame('user-uuid', $this->sent()->header('X-Actor-External-ID')[0]);
+        $this->assertSame(self::TENANT, $this->sent()->header('X-Tenant-External-ID')[0]);
+
+        $this->driver->listHosts(self::TENANT);
+        $this->assertFalse($this->sent()->hasHeader('X-Actor-External-ID'));
+
+        $this->driver->actingAs('user-uuid')->actingAs(null)->listHosts(self::TENANT);
+        $this->assertFalse($this->sent()->hasHeader('X-Actor-External-ID'));
+    }
+
+    public function test_upsert_member_looks_up_the_server_tenant_id_and_sends_role(): void
+    {
+        $this->fake(['*' => Http::sequence()
+            ->push(['items' => [['id' => 'srv-tenant-uuid', 'name' => 'Acme', 'status' => 'active']], 'next_cursor' => null])
+            ->push(['role' => 'operator'], 201)]);
+
+        $this->driver->upsertMember(self::TENANT, 'user-uuid', 'operator');
+
+        $this->assertSame('PUT', $this->sent()->method());
+        $this->assertStringEndsWith('/v1/tenants/srv-tenant-uuid/members/by-external-id/user-uuid', $this->sent()->url());
+        $this->assertSame(['role' => 'operator'], $this->sent()->data());
+        $this->assertFalse($this->sent()->hasHeader('X-Tenant-External-ID'));
     }
 
     public function test_problem_response_becomes_api_request_failed_with_body(): void
