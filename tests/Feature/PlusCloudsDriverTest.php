@@ -222,7 +222,7 @@ class PlusCloudsDriverTest extends TestCase
 
     public function test_push_is_unsupported_and_capabilities_listed(): void
     {
-        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics'] as $capability) {
+        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage'] as $capability) {
             $this->assertTrue($this->driver->supports($capability), $capability);
         }
         $this->assertFalse($this->driver->supports('push'));
@@ -265,6 +265,43 @@ class PlusCloudsDriverTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $this->driver->listMetricSeries(self::TENANT);
+    }
+
+    public function test_usage_reads_whole_hours_without_tenant_header_and_follows_cursors(): void
+    {
+        $item = ['account_id' => self::TENANT, 'period_start' => '2026-10-04T12:00:00Z', 'period_end' => '2026-10-04T13:00:00Z', 'billable_check_seconds' => 21600, 'device_seconds' => 7200, 'revision' => 1, 'breakdown' => ['http' => ['count_seconds' => 7200, 'weight' => 2]]];
+        $this->fake(['*' => Http::sequence()->push(['items' => [$item], 'next_cursor' => 'c2'])->push(['items' => [$item], 'next_cursor' => null])]);
+
+        $usage = $this->driver->usage(new \DateTimeImmutable('2026-10-04T12:00:00+03:00'), new \DateTimeImmutable('2026-10-04T15:00:00Z'));
+
+        $this->assertCount(2, $usage);
+        $this->assertSame(21600, $usage->first()['billable_check_seconds']);
+        $url = urldecode($this->sent()->url());
+        $this->assertStringContainsString('/v1/usage/tenants?', $url);
+        $this->assertStringContainsString('from=2026-10-04T09:00:00Z', $url);
+        $this->assertStringContainsString('to=2026-10-04T15:00:00Z', $url);
+        $this->assertStringContainsString('cursor=c2', $url);
+        $this->assertFalse($this->sent()->hasHeader('X-Tenant-External-ID'));
+    }
+
+    public function test_usage_refuses_partial_hours_and_surfaces_open_hour_errors(): void
+    {
+        try {
+            $this->driver->usage(new \DateTimeImmutable('2026-10-04T12:30:00Z'), new \DateTimeImmutable('2026-10-04T14:00:00Z'));
+            $this->fail('expected exception');
+        } catch (InvalidArgumentException) {
+            $this->assertTrue(true);
+        }
+
+        $this->fake(['*' => Http::response(['type' => 'https://monitor.plusclouds.com/problems/usage-hour-open', 'status' => 422, 'detail' => 'closed up to 2026-10-04T12:00:00Z'], 422)]);
+
+        try {
+            $this->driver->usage(new \DateTimeImmutable('2026-10-04T12:00:00Z'), new \DateTimeImmutable('2026-10-04T14:00:00Z'));
+            $this->fail('expected exception');
+        } catch (ApiRequestFailed $e) {
+            $this->assertSame(422, $e->status);
+            $this->assertStringEndsWith('/usage-hour-open', $e->body['type']);
+        }
     }
 
     public function test_problem_response_becomes_api_request_failed_with_body(): void

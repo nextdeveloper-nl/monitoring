@@ -6,8 +6,10 @@ use DateTimeInterface;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
 use DateTimeImmutable;
+use DateTimeZone;
 use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
+use NextDeveloper\Monitoring\Contracts\ReportsUsage;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
 use NextDeveloper\Monitoring\Contracts\ManagesSites;
 use NextDeveloper\Monitoring\DataTransferObjects\Alert;
@@ -39,9 +41,9 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage
 {
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage'];
 
     public function driverName(): string
     {
@@ -458,6 +460,45 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
             isset($i['opened_at']) ? new DateTimeImmutable($i['opened_at']) : null,
             $i,
         );
+    }
+
+    /**
+     * Billable usage per tenant per closed hour (platform key, no tenant header). Items carry the account UUID,
+     * hour start/end, billable_check_seconds (already weighted), device_seconds (informational, not billed),
+     * revision (only the latest per hour is returned) and the per-plugin breakdown.
+     * The server refuses open hours and ranges over 31 days with 422; whole-hour bounds are checked here too.
+     */
+    public function usage(DateTimeInterface $from, DateTimeInterface $to): Collection
+    {
+        $utc = new DateTimeZone('UTC');
+        $from = DateTimeImmutable::createFromInterface($from)->setTimezone($utc);
+        $to = DateTimeImmutable::createFromInterface($to)->setTimezone($utc);
+
+        foreach ([$from, $to] as $bound) {
+            if ($bound->format('i:s') !== '00:00') {
+                throw new InvalidArgumentException('usage() needs whole UTC hours; got '.$bound->format(DATE_ATOM).'.');
+            }
+        }
+
+        $items = collect();
+        $cursor = null;
+
+        do {
+            $page = $this->request('GET', $this->path('usage/tenants'), [], array_filter([
+                'from' => $from->format('Y-m-d\TH:i:s\Z'),
+                'to' => $to->format('Y-m-d\TH:i:s\Z'),
+                'limit' => 500,
+                'cursor' => $cursor,
+            ]));
+
+            foreach ($page['items'] ?? [] as $item) {
+                $items->push($item);
+            }
+
+            $cursor = $page['next_cursor'] ?? null;
+        } while ($cursor);
+
+        return $items;
     }
 
     /** Follow cursors for any list endpoint, mapping each item. */
