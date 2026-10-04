@@ -7,10 +7,17 @@ use Illuminate\Support\Collection;
 use InvalidArgumentException;
 use DateTimeImmutable;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
+use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
+use NextDeveloper\Monitoring\Contracts\ManagesSites;
 use NextDeveloper\Monitoring\DataTransferObjects\Alert;
+use NextDeveloper\Monitoring\DataTransferObjects\AlertRoute;
+use NextDeveloper\Monitoring\DataTransferObjects\Site;
+use NextDeveloper\Monitoring\DataTransferObjects\Webhook;
 use NextDeveloper\Monitoring\DataTransferObjects\Check;
 use NextDeveloper\Monitoring\DataTransferObjects\CheckResult;
 use NextDeveloper\Monitoring\DataTransferObjects\CheckState;
+use NextDeveloper\Monitoring\Enums\AlertSeverity;
+use NextDeveloper\Monitoring\Enums\AlertStatus;
 use NextDeveloper\Monitoring\Enums\CheckStatus;
 use NextDeveloper\Monitoring\DataTransferObjects\Event;
 use NextDeveloper\Monitoring\DataTransferObjects\Host;
@@ -26,11 +33,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * external id, which is the account UUID, so in this driver the "tenant id" used in every call
  * is that external id (not the monitoring server's own tenant UUID).
  *
- * Supports tenants, hosts (devices) and checks. Metrics, alerts and push throw UnsupportedOperation until the server ships them.
+ * Supports tenants, hosts (devices), checks, alerts (incidents), sites and notifications (webhooks, alert routes).
+ * Metrics and push throw UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications
 {
-    protected array $capabilities = ['tenants', 'hosts', 'checks'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications'];
 
     public function driverName(): string
     {
@@ -337,19 +345,188 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks
         $this->unsupported('getMetrics');
     }
 
+    /** Alerts are incidents. Filters: status (open|acknowledged|resolved|active), severity, device_id (or host_id), check_id. */
     public function listAlerts(string $tenantId, array $filters = []): Collection
     {
-        $this->unsupported('listAlerts');
+        if (isset($filters['host_id'])) {
+            $filters['device_id'] = $filters['host_id'];
+            unset($filters['host_id']);
+        }
+
+        $alerts = collect();
+        $cursor = null;
+
+        do {
+            $page = $this->request('GET', $this->path('incidents'), [], array_filter($filters + ['limit' => 500, 'cursor' => $cursor]), $this->tenantHeaders($tenantId));
+
+            foreach ($page['items'] ?? [] as $incident) {
+                $alerts->push($this->toAlert($incident));
+            }
+
+            $cursor = $page['next_cursor'] ?? null;
+        } while ($cursor);
+
+        return $alerts;
     }
 
+    /** Acknowledging twice is a no-op on the server; a note is added as a comment. */
     public function acknowledgeAlert(string $tenantId, string $alertId, ?string $note = null): Alert
     {
-        $this->unsupported('acknowledgeAlert');
+        $incident = $this->request('POST', $this->path("incidents/{$alertId}/ack"), [], [], $this->tenantHeaders($tenantId));
+
+        if ($note !== null && $note !== '') {
+            $this->request('POST', $this->path("incidents/{$alertId}/comments"), ['body' => $note], [], $this->tenantHeaders($tenantId));
+        }
+
+        return $this->toAlert($incident);
     }
 
+    /** The check's state starts over; if the problem persists a new incident opens. */
     public function resolveAlert(string $tenantId, string $alertId): Alert
     {
-        $this->unsupported('resolveAlert');
+        return $this->toAlert($this->request('POST', $this->path("incidents/{$alertId}/resolve"), [], [], $this->tenantHeaders($tenantId)));
+    }
+
+    protected function toAlert(array $i): Alert
+    {
+        return new Alert(
+            (string) ($i['id'] ?? ''),
+            (string) ($i['summary'] ?? ''),
+            AlertSeverity::tryFrom($i['severity'] ?? '') ?? AlertSeverity::Warning,
+            AlertStatus::tryFrom($i['status'] ?? '') ?? AlertStatus::Open,
+            $i['device_id'] ?? null,
+            isset($i['opened_at']) ? new DateTimeImmutable($i['opened_at']) : null,
+            $i,
+        );
+    }
+
+    /** Follow cursors for any list endpoint, mapping each item. */
+    protected function listAll(string $tenantId, string $path, callable $map): Collection
+    {
+        $items = collect();
+        $cursor = null;
+
+        do {
+            $page = $this->request('GET', $this->path($path), [], array_filter(['limit' => 500, 'cursor' => $cursor]), $this->tenantHeaders($tenantId));
+
+            foreach ($page['items'] ?? [] as $item) {
+                $items->push($map($item));
+            }
+
+            $cursor = $page['next_cursor'] ?? null;
+        } while ($cursor);
+
+        return $items;
+    }
+
+    /** Upsert by external id (the source object's UUID); source defaults to plusclouds on the server. */
+    protected function upsertByExternalId(string $tenantId, string $resource, ?string $externalId, ?string $externalType, array $body): array
+    {
+        if (! $externalId) {
+            throw new InvalidArgumentException("PlusCloudsDriver needs an externalId to upsert a {$resource}.");
+        }
+
+        return $this->request('PUT', $this->path("{$resource}/by-external-id/".rawurlencode($externalId)), $body, array_filter(['type' => $externalType]), $this->tenantHeaders($tenantId));
+    }
+
+    public function listSites(string $tenantId): Collection
+    {
+        return $this->listAll($tenantId, 'sites', fn (array $s) => $this->toSite($s));
+    }
+
+    public function upsertSite(string $tenantId, Site $site): Site
+    {
+        $body = array_filter([
+            'name' => $site->name,
+            'country' => $site->country,
+            'timezone' => $site->timezone,
+            'address' => $site->address,
+        ], fn ($v) => $v !== null);
+
+        return $this->toSite($this->upsertByExternalId($tenantId, 'sites', $site->externalId, $site->externalType, $body));
+    }
+
+    public function deleteSite(string $tenantId, string $siteId): void
+    {
+        $this->request('DELETE', $this->path("sites/{$siteId}"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    protected function toSite(array $s): Site
+    {
+        return new Site($s['id'] ?? null, (string) ($s['name'] ?? ''), $s['country'] ?? null, $s['timezone'] ?? null, $s['address'] ?? null, $s['external']['id'] ?? null, $s['external']['type'] ?? null, $s);
+    }
+
+    public function listWebhooks(string $tenantId): Collection
+    {
+        return $this->listAll($tenantId, 'webhooks', fn (array $w) => $this->toWebhook($w));
+    }
+
+    public function upsertWebhook(string $tenantId, Webhook $webhook): Webhook
+    {
+        $body = array_filter([
+            'name' => $webhook->name,
+            'url' => $webhook->url,
+            'enabled' => $webhook->enabled,
+            'timeout_seconds' => $webhook->timeoutSeconds,
+            'headers' => $webhook->headers ?: null,
+        ], fn ($v) => $v !== null);
+
+        return $this->toWebhook($this->upsertByExternalId($tenantId, 'webhooks', $webhook->externalId, $webhook->externalType, $body));
+    }
+
+    public function deleteWebhook(string $tenantId, string $webhookId): void
+    {
+        $this->request('DELETE', $this->path("webhooks/{$webhookId}"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    public function testWebhook(string $tenantId, string $webhookId): array
+    {
+        $r = $this->request('POST', $this->path("webhooks/{$webhookId}/test"), [], [], $this->tenantHeaders($tenantId));
+
+        return ['ok' => (bool) ($r['ok'] ?? false), 'status_code' => $r['status_code'] ?? null, 'response' => $r['response'] ?? null, 'error' => $r['error'] ?? null];
+    }
+
+    public function rotateWebhookSecret(string $tenantId, string $webhookId): string
+    {
+        $r = $this->request('POST', $this->path("webhooks/{$webhookId}/rotate-secret"), [], [], $this->tenantHeaders($tenantId));
+
+        return (string) ($r['secret'] ?? '');
+    }
+
+    /** The secret is in the response only when the webhook was created or rotated; raw keeps it out of toArray(). */
+    protected function toWebhook(array $w): Webhook
+    {
+        return new Webhook($w['id'] ?? null, (string) ($w['name'] ?? ''), (string) ($w['url'] ?? ''), (bool) ($w['enabled'] ?? true), $w['timeout_seconds'] ?? null, [], $w['external']['id'] ?? null, $w['external']['type'] ?? null, $w['secret'] ?? null, array_diff_key($w, ['secret' => 1]));
+    }
+
+    public function listAlertRoutes(string $tenantId): Collection
+    {
+        return $this->listAll($tenantId, 'alert-routes', fn (array $r) => $this->toAlertRoute($r));
+    }
+
+    public function upsertAlertRoute(string $tenantId, AlertRoute $route): AlertRoute
+    {
+        $body = array_filter([
+            'name' => $route->name,
+            'endpoint_id' => $route->webhookId,
+            'position' => $route->position,
+            'enabled' => $route->enabled,
+            'match' => $route->match ?: null,
+            'continue' => $route->continue,
+            'labels' => $route->labels ?: null,
+        ], fn ($v) => $v !== null);
+
+        return $this->toAlertRoute($this->upsertByExternalId($tenantId, 'alert-routes', $route->externalId, $route->externalType, $body));
+    }
+
+    public function deleteAlertRoute(string $tenantId, string $routeId): void
+    {
+        $this->request('DELETE', $this->path("alert-routes/{$routeId}"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    protected function toAlertRoute(array $r): AlertRoute
+    {
+        return new AlertRoute($r['id'] ?? null, (string) ($r['name'] ?? ''), (string) ($r['endpoint_id'] ?? ''), $r['position'] ?? null, (bool) ($r['enabled'] ?? true), $r['match'] ?? [], (bool) ($r['continue'] ?? false), $r['labels'] ?? [], $r['external']['id'] ?? null, $r['external']['type'] ?? null, $r);
     }
 
     public function pushMetrics(string $tenantId, string $hostId, iterable $metrics): void
