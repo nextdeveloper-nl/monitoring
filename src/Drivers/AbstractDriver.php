@@ -42,11 +42,12 @@ abstract class AbstractDriver implements MonitoringDriver
         return $token ? $request->withToken($token) : $request;
     }
 
-    protected function http(): PendingRequest
+    protected function http(array $headers = []): PendingRequest
     {
         $request = Http::baseUrl(rtrim($this->server->base_url, '/'))
             ->acceptJson()
             ->asJson()
+            ->withHeaders($headers)
             ->timeout((int) config('monitoring.http.timeout', 15))
             ->retry(
                 (int) config('monitoring.http.retries', 2),
@@ -58,11 +59,11 @@ abstract class AbstractDriver implements MonitoringDriver
         return $this->authenticate($request);
     }
 
-    /** Send a request; returns decoded JSON body. Throws ApiRequestFailed on any failure. */
-    protected function request(string $method, string $path, array $data = [], array $query = []): array
+    /** Send a request (optional per-call headers, e.g. tenant/actor); returns decoded JSON body. Throws ApiRequestFailed on any failure. */
+    protected function request(string $method, string $path, array $data = [], array $query = [], array $headers = []): array
     {
         try {
-            $response = $this->http()->send($method, ltrim($path, '/'), array_filter([
+            $response = $this->http($headers)->send($method, ltrim($path, '/'), array_filter([
                 'query' => $query ?: null,
                 'json' => $data ?: null,
             ]));

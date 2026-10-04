@@ -19,6 +19,7 @@ return [
      */
     'drivers' => [
         'null' => \NextDeveloper\Monitoring\Drivers\NullDriver::class,
+        'plusclouds' => \NextDeveloper\Monitoring\Drivers\PlusCloudsDriver::class,
     ],
 
     'http' => [

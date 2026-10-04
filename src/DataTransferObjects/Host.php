@@ -13,6 +13,10 @@ final class Host
         public readonly HostStatus $status = HostStatus::Unknown,
         public readonly array $tags = [],
         public readonly array $raw = [],
+        public readonly ?string $type = null,
+        /** The source object's UUID (e.g. the VM) and full model class; makes create idempotent on servers that support it. */
+        public readonly ?string $externalId = null,
+        public readonly ?string $externalType = null,
     ) {
     }
 
@@ -24,6 +28,7 @@ final class Host
             'address' => $this->address,
             'status' => $this->status->value,
             'tags' => $this->tags,
+            'type' => $this->type,
         ];
     }
 }
