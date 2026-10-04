@@ -11,6 +11,8 @@ final class MetricSeries
         public readonly string $key,
         public readonly Collection $points,
         public readonly ?string $unit = null,
+        public readonly ?string $object = null,
+        public readonly array $raw = [],
     ) {
     }
 }

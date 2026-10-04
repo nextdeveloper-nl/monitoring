@@ -220,15 +220,51 @@ class PlusCloudsDriverTest extends TestCase
         $this->driver->upsertSite(self::TENANT, new Site(null, 'No external id'));
     }
 
-    public function test_metrics_and_push_are_unsupported_and_capabilities_listed(): void
+    public function test_push_is_unsupported_and_capabilities_listed(): void
     {
-        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications'] as $capability) {
+        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics'] as $capability) {
             $this->assertTrue($this->driver->supports($capability), $capability);
         }
-        $this->assertFalse($this->driver->supports('metrics'));
+        $this->assertFalse($this->driver->supports('push'));
 
         $this->expectException(UnsupportedOperation::class);
-        $this->driver->getMetrics(self::TENANT, 'd1');
+        $this->driver->pushMetrics(self::TENANT, 'd1', []);
+    }
+
+    public function test_metrics_query_uses_repeated_names_and_maps_points(): void
+    {
+        $this->fake(['*' => Http::response(['resolution' => 'raw', 'step' => 30, 'series' => [
+            ['device_id' => 'd1', 'check_id' => 'c1', 'object' => '', 'name' => 'total_ms', 'unit' => 'ms', 'series_ids' => [5], 'points' => [['t' => '2026-10-04T12:32:00Z', 'v' => 370.9], ['t' => '2026-10-04T12:32:30Z', 'v' => 12]]],
+        ]])]);
+
+        $series = $this->driver->getMetrics(self::TENANT, 'd1', ['total_ms', 'ttfb_ms'], new \DateTimeImmutable('2026-10-04T12:00:00Z'), null, ['step' => 30, 'agg' => 'max', 'check_id' => 'c1']);
+
+        $url = urldecode($this->sent()->url());
+        $this->assertStringContainsString('/v1/metrics/query?', $url);
+        $this->assertStringContainsString('name=total_ms&name=ttfb_ms', $url);
+        $this->assertStringContainsString('device_id=d1', $url);
+        $this->assertStringContainsString('step=30', $url);
+        $this->assertStringContainsString('agg=max', $url);
+        $this->assertSame(self::TENANT, $this->sent()->header('X-Tenant-External-ID')[0]);
+
+        $this->assertCount(1, $series);
+        $this->assertSame('total_ms', $series->first()->key);
+        $this->assertSame('ms', $series->first()->unit);
+        $this->assertSame('raw', $series->first()->raw['resolution']);
+        $this->assertSame('c1', $series->first()->raw['check_id']);
+        $this->assertCount(2, $series->first()->points);
+        $this->assertSame(370.9, $series->first()->points->first()->value);
+    }
+
+    public function test_metric_series_needs_a_selector(): void
+    {
+        $this->fake(['*' => Http::response(['items' => [['name' => 'total_ms', 'unit' => 'ms']]])]);
+
+        $this->assertCount(1, $this->driver->listMetricSeries(self::TENANT, 'd1', null, ['total_ms']));
+        $this->assertStringContainsString('device_id=d1', $this->sent()->url());
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->driver->listMetricSeries(self::TENANT);
     }
 
     public function test_problem_response_becomes_api_request_failed_with_body(): void

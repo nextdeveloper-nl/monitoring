@@ -6,6 +6,7 @@ use DateTimeInterface;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
 use DateTimeImmutable;
+use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
 use NextDeveloper\Monitoring\Contracts\ManagesSites;
@@ -21,6 +22,8 @@ use NextDeveloper\Monitoring\Enums\AlertStatus;
 use NextDeveloper\Monitoring\Enums\CheckStatus;
 use NextDeveloper\Monitoring\DataTransferObjects\Event;
 use NextDeveloper\Monitoring\DataTransferObjects\Host;
+use NextDeveloper\Monitoring\DataTransferObjects\Metric;
+use NextDeveloper\Monitoring\DataTransferObjects\MetricSeries;
 use NextDeveloper\Monitoring\DataTransferObjects\Tenant;
 use NextDeveloper\Monitoring\Enums\HostStatus;
 use NextDeveloper\Monitoring\Exceptions\ApiRequestFailed;
@@ -33,12 +36,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * external id, which is the account UUID, so in this driver the "tenant id" used in every call
  * is that external id (not the monitoring server's own tenant UUID).
  *
- * Supports tenants, hosts (devices), checks, alerts (incidents), sites and notifications (webhooks, alert routes).
- * Metrics and push throw UnsupportedOperation until the server ships them.
+ * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
+ * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries
 {
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics'];
 
     public function driverName(): string
     {
@@ -340,9 +343,66 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         );
     }
 
-    public function getMetrics(string $tenantId, string $hostId, array $keys = [], ?DateTimeInterface $from = null, ?DateTimeInterface $to = null): Collection
+    /**
+     * Stored check metrics of one host (device). $keys are metric names; options: check_id, object, step (s),
+     * agg (avg|min|max|sum), resolution (raw|5m|1h). Defaults on the server: last hour, ~500 points.
+     * Buckets with no data are omitted, so a gap means no data. Another tenant's ids come back empty.
+     */
+    public function getMetrics(string $tenantId, string $hostId, array $keys = [], ?DateTimeInterface $from = null, ?DateTimeInterface $to = null, array $options = []): Collection
     {
-        $this->unsupported('getMetrics');
+        $query = array_filter([
+            'device_id' => $hostId,
+            'check_id' => $options['check_id'] ?? null,
+            'object' => $options['object'] ?? null,
+            'from' => $from?->format(DATE_ATOM),
+            'to' => $to?->format(DATE_ATOM),
+            'step' => $options['step'] ?? null,
+            'agg' => $options['agg'] ?? null,
+            'resolution' => $options['resolution'] ?? null,
+        ], fn ($v) => $v !== null);
+
+        $response = $this->request('GET', $this->path('metrics/query').$this->queryString($query, ['name' => $keys]), [], [], $this->tenantHeaders($tenantId));
+
+        return collect($response['series'] ?? [])->map(fn (array $s) => new MetricSeries(
+            (string) ($s['name'] ?? ''),
+            collect($s['points'] ?? [])->map(fn (array $p) => new Metric(
+                (string) ($s['name'] ?? ''),
+                $p['v'],
+                new DateTimeImmutable($p['t']),
+            ))->values(),
+            $s['unit'] ?? null,
+            $s['object'] ?? null,
+            array_diff_key($s, ['points' => 1]) + ['resolution' => $response['resolution'] ?? null, 'step' => $response['step'] ?? null],
+        ))->values();
+    }
+
+    /** What is stored for a host and/or check: id, plugin, object, name, unit, kind, retention_class. At most 200. */
+    public function listMetricSeries(string $tenantId, ?string $hostId = null, ?string $checkId = null, array $keys = []): Collection
+    {
+        if (! $hostId && ! $checkId) {
+            throw new InvalidArgumentException('listMetricSeries needs a host id or a check id.');
+        }
+
+        $query = array_filter(['device_id' => $hostId, 'check_id' => $checkId], fn ($v) => $v !== null);
+        $response = $this->request('GET', $this->path('metrics/series').$this->queryString($query, ['name' => $keys]), [], [], $this->tenantHeaders($tenantId));
+
+        return collect($response['items'] ?? [])->values();
+    }
+
+    /** "?a=1&name=x&name=y": the server wants repeated keys, not name[0]=x. */
+    protected function queryString(array $single, array $repeated = []): string
+    {
+        $parts = [http_build_query($single)];
+
+        foreach ($repeated as $key => $values) {
+            foreach ($values as $value) {
+                $parts[] = rawurlencode($key).'='.rawurlencode((string) $value);
+            }
+        }
+
+        $parts = array_filter($parts, fn ($p) => $p !== '');
+
+        return $parts ? '?'.implode('&', $parts) : '';
     }
 
     /** Alerts are incidents. Filters: status (open|acknowledged|resolved|active), severity, device_id (or host_id), check_id. */

@@ -67,7 +67,7 @@ class NullDriver extends AbstractDriver
     {
     }
 
-    public function getMetrics(string $tenantId, string $hostId, array $keys = [], ?DateTimeInterface $from = null, ?DateTimeInterface $to = null): Collection
+    public function getMetrics(string $tenantId, string $hostId, array $keys = [], ?DateTimeInterface $from = null, ?DateTimeInterface $to = null, array $options = []): Collection
     {
         return collect();
     }
