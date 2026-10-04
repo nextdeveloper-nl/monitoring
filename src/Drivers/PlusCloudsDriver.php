@@ -594,10 +594,30 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         return (string) ($r['secret'] ?? '');
     }
 
+    /** Newest first; follows cursors but stops at 500 rows, the list can be long. */
+    public function listWebhookDeliveries(string $tenantId, string $webhookId, ?string $status = null): Collection
+    {
+        $items = collect();
+        $cursor = null;
+
+        do {
+            $page = $this->request('GET', $this->path("webhooks/{$webhookId}/deliveries"), [], array_filter(['limit' => 100, 'cursor' => $cursor, 'status' => $status]), $this->tenantHeaders($tenantId));
+            $items = $items->merge($page['items'] ?? []);
+            $cursor = $page['next_cursor'] ?? null;
+        } while ($cursor && $items->count() < 500);
+
+        return $items->values();
+    }
+
+    public function replayWebhookDelivery(string $tenantId, string $webhookId, string $deliveryId): void
+    {
+        $this->request('POST', $this->path("webhooks/{$webhookId}/deliveries/{$deliveryId}/replay"), [], [], $this->tenantHeaders($tenantId));
+    }
+
     /** The secret is in the response only when the webhook was created or rotated; raw keeps it out of toArray(). */
     protected function toWebhook(array $w): Webhook
     {
-        return new Webhook($w['id'] ?? null, (string) ($w['name'] ?? ''), (string) ($w['url'] ?? ''), (bool) ($w['enabled'] ?? true), $w['timeout_seconds'] ?? null, [], $w['external']['id'] ?? null, $w['external']['type'] ?? null, $w['secret'] ?? null, array_diff_key($w, ['secret' => 1]));
+        return new Webhook($w['id'] ?? null, (string) ($w['name'] ?? ''), (string) ($w['url'] ?? ''), (bool) ($w['enabled'] ?? true), $w['timeout_seconds'] ?? null, [], $w['external']['id'] ?? null, $w['external']['type'] ?? null, $w['secret'] ?? null, array_diff_key($w, ['secret' => 1]), $w['disabled_reason'] ?? null);
     }
 
     public function listAlertRoutes(string $tenantId): Collection

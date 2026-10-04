@@ -23,6 +23,16 @@ interface ManagesNotifications
     /** Returns the new secret (shown once); the old one stays valid for 24 h. */
     public function rotateWebhookSecret(string $tenantId, string $webhookId): string;
 
+    /**
+     * Delivery attempts of one webhook, newest first. $status: pending|delivered|failed|cancelled.
+     *
+     * @return Collection<int, array> id, event_id, event_type, subject, status, attempts, last_status_code, last_error, delivered_at, created_at
+     */
+    public function listWebhookDeliveries(string $tenantId, string $webhookId, ?string $status = null): Collection;
+
+    /** Re-queue one delivery with a fresh retry window. */
+    public function replayWebhookDelivery(string $tenantId, string $webhookId, string $deliveryId): void;
+
     /** @return Collection<int, AlertRoute> */
     public function listAlertRoutes(string $tenantId): Collection;
 

@@ -17,6 +17,8 @@ final class Webhook
         /** Signing secret (whsec_...). Only set on the response that created the webhook or rotated the secret; shown once. */
         public readonly ?string $secret = null,
         public readonly array $raw = [],
+        /** Set when the server disabled the endpoint itself, e.g. after the receiver answered 410 Gone. */
+        public readonly ?string $disabledReason = null,
     ) {
     }
 
@@ -30,6 +32,7 @@ final class Webhook
             'enabled' => $this->enabled,
             'timeout_seconds' => $this->timeoutSeconds,
             'external_id' => $this->externalId,
+            'disabled_reason' => $this->disabledReason,
         ];
     }
 }

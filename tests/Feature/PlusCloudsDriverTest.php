@@ -304,6 +304,31 @@ class PlusCloudsDriverTest extends TestCase
         }
     }
 
+    public function test_webhook_deliveries_filter_by_status_and_replay_posts(): void
+    {
+        $this->fake(['*' => Http::response(['items' => [['id' => 'dl1', 'status' => 'failed', 'attempts' => 7, 'last_error' => 'timeout']], 'next_cursor' => null])]);
+
+        $deliveries = $this->driver->listWebhookDeliveries(self::TENANT, 'w1', 'failed');
+        $this->assertCount(1, $deliveries);
+        $this->assertStringContainsString('/v1/webhooks/w1/deliveries', $this->sent()->url());
+        $this->assertStringContainsString('status=failed', $this->sent()->url());
+
+        $this->fake(['*' => Http::response(null, 202)]);
+        $this->driver->replayWebhookDelivery(self::TENANT, 'w1', 'dl1');
+        $this->assertSame('POST', $this->sent()->method());
+        $this->assertStringEndsWith('/v1/webhooks/w1/deliveries/dl1/replay', $this->sent()->url());
+    }
+
+    public function test_webhook_exposes_disabled_reason(): void
+    {
+        $this->fake(['*' => Http::response(['items' => [['id' => 'w1', 'name' => 'n', 'url' => 'https://x', 'enabled' => false, 'disabled_reason' => 'receiver answered 410 Gone']], 'next_cursor' => null])]);
+
+        $webhook = $this->driver->listWebhooks(self::TENANT)->first();
+
+        $this->assertFalse($webhook->enabled);
+        $this->assertSame('receiver answered 410 Gone', $webhook->disabledReason);
+    }
+
     public function test_problem_response_becomes_api_request_failed_with_body(): void
     {
         $this->fake(['*' => Http::response(['type' => 'https://monitor.plusclouds.com/problems/tenant-suspended', 'status' => 403], 403)]);
