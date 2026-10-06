@@ -17,6 +17,7 @@ use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
 use NextDeveloper\Monitoring\Contracts\GuardsTenantRestore;
 use NextDeveloper\Monitoring\Contracts\ManagesSites;
+use NextDeveloper\Monitoring\Contracts\SummarizesMetrics;
 use NextDeveloper\Monitoring\Contracts\RestoresTenants;
 use NextDeveloper\Monitoring\DataTransferObjects\Alert;
 use NextDeveloper\Monitoring\DataTransferObjects\AlertRoute;
@@ -74,7 +75,7 @@ class MonitoringProxyService
             'name' => $tenant->name,
             'status' => $tenant->status instanceof \BackedEnum ? $tenant->status->value : $tenant->status,
             'capabilities' => array_values(array_filter(
-                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors'],
+                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors', 'summary'],
                 fn ($c) => $this->manager->forTenant($tenant)->supports($c),
             )),
         ];
@@ -303,10 +304,18 @@ class MonitoringProxyService
 
         $to = isset($params['to']) ? Carbon::parse($params['to']) : Carbon::now();
         $from = isset($params['from']) ? Carbon::parse($params['from']) : $to->copy()->subHour();
+        $agg = $params['agg'] ?? null;
+
+        // Percentiles and standard deviation come from raw samples only (about 7 days of them), so they always ask for
+        // resolution raw and a step that keeps the series under the service's 10,000 points; avg, min, max and sum
+        // keep the usual step by range and may use the coarser rollups for long ranges.
+        $raw = $agg !== null && ! in_array($agg, ['avg', 'min', 'max', 'sum'], true);
 
         $options = array_filter([
-            'step' => $params['step'] ?? $this->defaultStep($from, $to),
-            'agg' => $params['agg'] ?? null,
+            'step' => $params['step'] ?? ($raw ? $this->rawStep($from, $to) : $this->defaultStep($from, $to)),
+            'agg' => $agg,
+            'resolution' => $raw ? 'raw' : null,
+            'moving_window' => $params['moving_window'] ?? null,
             'check_id' => $params['check_id'] ?? null,
             'object' => $params['object'] ?? null,
         ], fn ($v) => $v !== null);
@@ -318,6 +327,7 @@ class MonitoringProxyService
             'to' => $to->toAtomString(),
             'step' => $options['step'],
             'resolution' => $series->first()?->raw['resolution'] ?? null,
+            'agg' => $agg ?? 'avg',
             'series' => $series->map(fn (MetricSeries $s) => [
                 'name' => $s->key,
                 'unit' => $s->unit,
@@ -326,6 +336,62 @@ class MonitoringProxyService
                 'points' => $s->points->map(fn ($p) => ['t' => $p->timestamp?->format(DATE_ATOM), 'v' => $p->value])->values()->all(),
             ])->values()->all(),
         ];
+    }
+
+    /**
+     * One set of statistics per metric series over the whole window (default: the last hour): count, min, max, avg,
+     * stddev, p50, p95, p99, any extra percentiles asked for, and the last value. Exact (from raw samples); a window
+     * older than raw retention (about 7 days) answers 422 instead of an approximation.
+     * $params: name[], check_id, object, from, to, percentile[] (p90, p99.9, up to 10), window (last N samples).
+     */
+    public function metricSummary(string $hostId, array $params = []): array
+    {
+        [$driver, $id] = $this->context();
+
+        if (! $driver instanceof SummarizesMetrics) {
+            throw UnsupportedOperation::for($driver->driverName(), 'metric summary');
+        }
+
+        $summary = $driver->summarizeMetrics(
+            $id, $hostId, $params['name'] ?? [],
+            isset($params['from']) ? Carbon::parse($params['from']) : null,
+            isset($params['to']) ? Carbon::parse($params['to']) : null,
+            array_intersect_key($params, array_flip(['check_id', 'object', 'percentile', 'window'])),
+        );
+
+        return [
+            'from' => $summary['from'],
+            'to' => $summary['to'],
+            'resolution' => $summary['resolution'],
+            'exact' => $summary['exact'],
+            'series' => $summary['series']->map(fn (array $s) => [
+                'name' => $s['name'] ?? null,
+                'unit' => $s['unit'] ?? null,
+                'object' => $s['object'] ?? null,
+                'check_id' => $s['check_id'] ?? null,
+                'count' => $s['count'] ?? 0,
+                'min' => $s['min'] ?? null,
+                'max' => $s['max'] ?? null,
+                'avg' => $s['avg'] ?? null,
+                'stddev' => $s['stddev'] ?? null,
+                'p50' => $s['p50'] ?? null,
+                'p95' => $s['p95'] ?? null,
+                'p99' => $s['p99'] ?? null,
+                'percentiles' => (object) ($s['percentiles'] ?? []),
+                'last' => $s['last'] ?? null,
+                'last_at' => $s['last_at'] ?? null,
+                // statistics of the last N samples, only with window=N
+                'moving' => $s['moving'] ?? null,
+            ])->values()->all(),
+        ];
+    }
+
+    /** Step for a raw-sample query: about 500 points, at least 10 s, never more than 9,000 points (the service caps a series at 10,000). */
+    private function rawStep(Carbon $from, Carbon $to): int
+    {
+        $seconds = max(1, $to->diffInSeconds($from));
+
+        return max(10, (int) ceil($seconds / 500));
     }
 
     /** Which metric series exist for a host (or one of its checks), so the client can offer graphs. */

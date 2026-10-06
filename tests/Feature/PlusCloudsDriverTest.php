@@ -223,7 +223,7 @@ class PlusCloudsDriverTest extends TestCase
 
     public function test_push_is_unsupported_and_capabilities_listed(): void
     {
-        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors'] as $capability) {
+        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary'] as $capability) {
             $this->assertTrue($this->driver->supports($capability), $capability);
         }
         $this->assertFalse($this->driver->supports('push'));
@@ -470,6 +470,37 @@ class PlusCloudsDriverTest extends TestCase
         $this->assertStringContainsString('from=2026-10-06T07:00:00Z', $url);
         $this->assertStringContainsString('to=2026-10-06T12:00:00Z', $url);
         $this->assertStringContainsString('status=failed', $url);
+    }
+
+    public function test_metric_summary_sends_repeated_names_and_percentiles_and_reports_exactness(): void
+    {
+        $this->fake(['*' => Http::response(['resolution' => 'raw', 'exact' => true, 'from' => '2026-10-07T10:00:00Z', 'to' => '2026-10-07T11:00:00Z', 'series' => [
+            ['name' => 'total_ms', 'unit' => 'ms', 'object' => '', 'check_id' => 'c1', 'count' => 60, 'min' => 66.8, 'max' => 85.6, 'avg' => 72.5, 'p50' => 70.2, 'p95' => 81.4, 'p99' => 85.2, 'percentiles' => ['p90' => 79.1], 'moving' => null],
+        ]])]);
+
+        $summary = $this->driver->summarizeMetrics(self::TENANT, 'd1', ['total_ms', 'ttfb_ms'], new \DateTimeImmutable('2026-10-07T10:00:00Z'), null, ['percentile' => ['p90', 'p99.9'], 'window' => 5, 'check_id' => 'c1']);
+
+        $url = urldecode($this->sent()->url());
+        $this->assertStringContainsString('/v1/metrics/summary?', $url);
+        $this->assertStringContainsString('name=total_ms&name=ttfb_ms', $url);
+        $this->assertStringContainsString('percentile=p90&percentile=p99.9', $url);
+        $this->assertStringContainsString('window=5', $url);
+        $this->assertStringContainsString('device_id=d1', $url);
+        $this->assertTrue($summary['exact']);
+        $this->assertSame('raw', $summary['resolution']);
+        $this->assertSame(81.4, $summary['series']->first()['p95']);
+    }
+
+    public function test_percentile_and_moving_window_options_reach_the_query(): void
+    {
+        $this->fake(['*' => Http::response(['resolution' => 'raw', 'step' => 120, 'series' => []])]);
+
+        $this->driver->getMetrics(self::TENANT, 'd1', ['total_ms'], null, null, ['agg' => 'p99.9', 'resolution' => 'raw', 'moving_window' => 7, 'step' => 120]);
+
+        $url = urldecode($this->sent()->url());
+        $this->assertStringContainsString('agg=p99.9', $url);
+        $this->assertStringContainsString('resolution=raw', $url);
+        $this->assertStringContainsString('moving_window=7', $url);
     }
 
     public function test_problem_response_becomes_api_request_failed_with_body(): void

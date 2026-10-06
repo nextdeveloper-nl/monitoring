@@ -37,6 +37,7 @@ Route::prefix('monitoring')->group(
 
                 Route::get('{host_id}/metrics', 'Metrics\HostMetricsController@index');
                 Route::get('{host_id}/metrics/series', 'Metrics\HostMetricsController@series');
+                Route::get('{host_id}/metrics/summary', 'Metrics\HostMetricsController@summary');
             }
         );
 

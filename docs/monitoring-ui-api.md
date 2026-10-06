@@ -287,7 +287,8 @@ Two calls. Both are on a host.
 | `name[]` | metric names; repeat the parameter (`name[]=total_ms&name[]=ttfb_ms`) |
 | `from`, `to` | ISO 8601; default is the last hour; `to` must be after `from` |
 | `step` | bucket size in seconds, 10 to 2592000; chosen automatically when omitted |
-| `agg` | `avg` (default), `min`, `max`, `sum` |
+| `agg` | `avg` (default), `min`, `max`, `sum`; or `stddev` (standard deviation); or a percentile written `p<number>`: `p50`, `p95`, `p99`, `p99.9` (up to 3 decimals, between 0 and 100 exclusive). Percentiles and `stddev` are computed from the raw samples inside each bucket, **never** by averaging bucket values, so a slow outlier is not hidden. They need raw data, which the service keeps for a limited time (about 7 days), and the backend asks for it automatically; a longer window answers `422` |
+| `moving_window` | 1 to 1000: replaces every point with the mean of itself and the previous N-1 points (a smoothing line; works with any `agg`) |
 | `check_id` | limit to one check |
 | `object` | sub-object key, rarely needed |
 
@@ -320,6 +321,30 @@ Rules for the chart:
 - A series for a host with no data, or a host that is not in this account, comes back as `"series": []`, not as an error.
 - Data exists only from the moment a check starts. Retention is set by the platform operator and can change, so do not promise a history length in the UI. Long ranges are served from coarser rollups (the `resolution` field says `raw`, `5m` or `1h`), so they look smoother than short ranges.
 - Good default graphs: response time for HTTP (`total_ms`), round-trip time and `packet_loss_percent` for ping.
+
+**Statistics for the whole window.** `GET /hosts/{host_id}/metrics/summary` returns one set of numbers per series for a range, for the "Min, Avg, P50, P95, P99, Max" row under a graph. Parameters: `name[]` (repeat it: one request per check carries all its metrics), `from`, `to` (default: the last hour), `check_id`, `object`, `percentile[]` (extra percentiles such as `p90` and `p99.9`, up to 10) and `window` (1 to 10000: also give the statistics of the last N samples).
+
+```json
+{"data": {
+  "from": "2026-10-07T10:00:00Z", "to": "2026-10-07T11:00:00Z",
+  "resolution": "raw", "exact": true,
+  "series": [{
+    "name": "total_ms", "unit": "ms", "object": "", "check_id": "…",
+    "count": 60, "min": 66.8, "max": 85.6, "avg": 72.5, "stddev": 4.9,
+    "p50": 70.2, "p95": 81.4, "p99": 85.2,
+    "percentiles": {"p90": 79.1},
+    "last": 70.9, "last_at": "2026-10-07T10:59:12Z",
+    "moving": null
+  }]
+}}
+```
+
+- The values come from raw samples, so they are **exact** (`exact` is always `true`; the service never approximates). A value is `null` when the window has no samples (`count` 0), and `stddev` is `null` with a single sample.
+- `moving` is only present with `window=N`: `{"window", "count", "avg", "stddev"}` over the last N samples.
+- `422 invalid-value` for a percentile outside 0 to 100 or a window longer than the raw retention, with the limit in the message. More than two million raw samples in one request is also refused: ask for a shorter range.
+- It is cheap enough for the last hour: poll it every 30 seconds with all of a check's metric names in one request. For ranges longer than the raw retention use the graph (`avg`, `min`, `max`) only and hide the percentile row, or label it unavailable.
+- Percentiles tell more than averages for response times: P95 and P99 are what the slowest users experience; the average hides the slow tail.
+
 
 ### 3.8 Notification channels
 
@@ -536,6 +561,7 @@ Pick a sensible form for each: the UI should show the plugin's own fields, with 
 | run check now | `POST /checks/{check_id}/run` |
 | graph series list | `GET /hosts/{host_id}/metrics/series` |
 | graph points | `GET /hosts/{host_id}/metrics` |
+| statistics for a range | `GET /hosts/{host_id}/metrics/summary` |
 | list alerts | `GET /alerts` (filters `status`, `severity`, `host_id`, `check_id`) |
 | acknowledge alert | `POST /alerts/{alert_id}/acknowledge` |
 | resolve alert | `POST /alerts/{alert_id}/resolve` |

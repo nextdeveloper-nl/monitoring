@@ -14,6 +14,7 @@ use NextDeveloper\Monitoring\Contracts\ListsCheckObjects;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
 use NextDeveloper\Monitoring\Contracts\ManagesCredentials;
 use NextDeveloper\Monitoring\Contracts\RestoresTenants;
+use NextDeveloper\Monitoring\Contracts\SummarizesMetrics;
 use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ReportsUsage;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
@@ -48,12 +49,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects, SummarizesMetrics
 {
     /** Set by actingAs(): the user whose role applies to tenant calls. Null = the platform, with full rights in the tenant. */
     protected ?string $actor = null;
 
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary'];
 
     public function driverName(): string
     {
@@ -413,7 +414,7 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
 
     /**
      * Stored check metrics of one host (device). $keys are metric names; options: check_id, object, step (s),
-     * agg (avg|min|max|sum), resolution (raw|5m|1h). Defaults on the server: last hour, ~500 points.
+     * agg (avg|min|max|sum|stddev|p<number> such as p95 or p99.9; the last two need resolution raw, which exists for about 7 days), moving_window (1..1000, mean of the last N points), resolution (raw|5m|1h). Defaults on the server: last hour, ~500 points.
      * Buckets with no data are omitted, so a gap means no data. Another tenant's ids come back empty.
      */
     public function getMetrics(string $tenantId, string $hostId, array $keys = [], ?DateTimeInterface $from = null, ?DateTimeInterface $to = null, array $options = []): Collection
@@ -427,6 +428,7 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
             'step' => $options['step'] ?? null,
             'agg' => $options['agg'] ?? null,
             'resolution' => $options['resolution'] ?? null,
+            'moving_window' => $options['moving_window'] ?? null,
         ], fn ($v) => $v !== null);
 
         $response = $this->request('GET', $this->path('metrics/query').$this->queryString($query, ['name' => $keys]), [], [], $this->tenantHeaders($tenantId));
@@ -442,6 +444,33 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
             $s['object'] ?? null,
             array_diff_key($s, ['points' => 1]) + ['resolution' => $response['resolution'] ?? null, 'step' => $response['step'] ?? null],
         ))->values();
+    }
+
+    /**
+     * Statistics over the whole window per series: count, min, max, avg, stddev, p50, p95, p99, extra percentiles, last value.
+     * Computed from raw samples, so they are exact; a window older than raw retention is refused with 422, never approximated.
+     * Options: check_id, object, percentile (string[], for example p90 and p99.9), window (statistics of the last N samples too).
+     */
+    public function summarizeMetrics(string $tenantId, string $hostId, array $keys = [], ?DateTimeInterface $from = null, ?DateTimeInterface $to = null, array $options = []): array
+    {
+        $query = $this->query([
+            'device_id' => $hostId,
+            'check_id' => $options['check_id'] ?? null,
+            'object' => $options['object'] ?? null,
+            'from' => $from?->format(DATE_ATOM),
+            'to' => $to?->format(DATE_ATOM),
+            'window' => $options['window'] ?? null,
+        ]);
+
+        $response = $this->request('GET', $this->path('metrics/summary').$this->queryString($query, ['name' => $keys, 'percentile' => $options['percentile'] ?? []]), [], [], $this->tenantHeaders($tenantId));
+
+        return [
+            'resolution' => $response['resolution'] ?? null,
+            'exact' => (bool) ($response['exact'] ?? false),
+            'from' => $response['from'] ?? null,
+            'to' => $response['to'] ?? null,
+            'series' => collect($response['series'] ?? [])->values(),
+        ];
     }
 
     /** What is stored for a host and/or check: id, plugin, object, name, unit, kind, retention_class. At most 200. */
