@@ -34,7 +34,7 @@ class ChannelsController extends AbstractMonitoringController
             'check_ids' => 'sometimes|array|max:100',
             'check_ids.*' => 'string|max:100',
             'event_types' => 'sometimes|array',
-            'event_types.*' => 'string|in:monitoring.incident.opened,monitoring.incident.updated,monitoring.incident.acknowledged,monitoring.incident.resolved,monitoring.incident.commented',
+            'event_types.*' => 'string|in:monitoring.incident.opened,monitoring.incident.updated,monitoring.incident.acknowledged,monitoring.incident.resolved,monitoring.incident.commented,monitoring.tenant.device_limit_reached,monitoring.tenant.check_limit_reached',
             // grouping: one event for incidents sharing these fields, sent after group_wait_seconds
             'group_by' => 'sometimes|array|max:7',
             'group_by.*' => 'string|in:root_device_id,device_id,site_id,severity,check_id,plugin,device_type',
@@ -72,7 +72,7 @@ class ChannelsController extends AbstractMonitoringController
             'check_ids' => 'sometimes|array|max:100',
             'check_ids.*' => 'string|max:100',
             'event_types' => 'sometimes|array',
-            'event_types.*' => 'string|in:monitoring.incident.opened,monitoring.incident.updated,monitoring.incident.acknowledged,monitoring.incident.resolved,monitoring.incident.commented',
+            'event_types.*' => 'string|in:monitoring.incident.opened,monitoring.incident.updated,monitoring.incident.acknowledged,monitoring.incident.resolved,monitoring.incident.commented,monitoring.tenant.device_limit_reached,monitoring.tenant.check_limit_reached',
             // grouping: one event for incidents sharing these fields, sent after group_wait_seconds
             'group_by' => 'sometimes|array|max:7',
             'group_by.*' => 'string|in:root_device_id,device_id,site_id,severity,check_id,plugin,device_type',

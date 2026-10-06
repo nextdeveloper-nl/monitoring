@@ -357,7 +357,7 @@ A channel is a webhook that receives alerts. The customer's own system gets an H
 | `tags` | only alerts on hosts with these tags; omit for all |
 | `site_ids` | only alerts on hosts in these sites; omit for all |
 | `check_ids` | only alerts of these checks (one alarm to its own channel); omit for all |
-| `event_types` | which events to send: `monitoring.incident.opened`, `.updated`, `.acknowledged`, `.resolved`, `.commented`. Default: opened, updated, acknowledged and resolved |
+| `event_types` | which events to send: `monitoring.incident.opened`, `.updated`, `.acknowledged`, `.resolved`, `.commented`, and the account limit events `monitoring.tenant.device_limit_reached` and `monitoring.tenant.check_limit_reached`. Default: opened, updated, acknowledged and resolved incidents, and the limit events. A limit event has no host, check or severity, so a channel that filters on `severity`, `device_types`, `tags`, `site_ids` or `check_ids` never receives it: to be told about limits, create a channel with no such filters (or one that names the limit events and nothing else) |
 | `group_by` | send one event for several incidents that share these fields, after `group_wait_seconds`. Allowed: `root_device_id`, `device_id`, `site_id`, `severity`, `check_id`, `plugin`, `device_type`. `["root_device_id"]` turns a switch outage into one message. Empty: every incident on its own |
 | `group_wait_seconds` | 0 to 600; how long to collect a group before sending it (default 30; only used with `group_by`) |
 | `repeat_interval_seconds` | 300 to 604800: resend open, unacknowledged incidents this often (event `monitoring.incident.renotify`); `null` or omitted: never |
@@ -461,6 +461,7 @@ A plugin with `kind: "collector"` (for example `snmp.interfaces`) reports **many
 - `min_interval_seconds` is the plugin's own floor. Customers have a higher floor of 30 seconds, so use `max(plugin floor, 30)` as the minimum in the form.
 - `kind` is `check` (one result per run) or `collector` (one result per object, for example every port of a switch; see 3.12).
 - `credential_types` lists the credential kinds a check of this type can use (empty: none needed). A plugin with credential types needs a credential in the `auth` role: create it first (3.11), then pass its id when you create the check. `http` and `icmp` work without one.
+- Collectors available now: `snmp.interfaces` (ports of a switch), `snmp.pdu` and `snmp.sensor` (APC power and environment), `redfish.health` (server hardware through its BMC: CPU, memory, drives, fans, power supplies, temperatures; needs a `redfish` credential, a read-only BMC account). Each is one check for billing, however many objects it has.
 - The list includes plugins that customers cannot always use yet. SNMP plugins (`snmp.system`, `snmp.get`, `snmp.ups`, and the `snmp.interfaces` collector) talk to devices that are usually on private networks, which customers cannot reach until remote probes exist; such a check fails with an explanation in its output. Offer them, but explain that the device must be reachable from the internet.
 
 The two types that exist today, for reference:

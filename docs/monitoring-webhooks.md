@@ -30,7 +30,7 @@ A `POST` with a CloudEvents 1.0 JSON body:
 
 | Field | Meaning |
 | --- | --- |
-| `type` | `monitoring.incident.opened`, `.updated`, `.acknowledged`, `.resolved`, `.commented`, `.renotify` (a reminder for an open, unacknowledged incident), `.escalated` (an escalation step fired), or `monitoring.webhook.test` |
+| `type` | `monitoring.tenant.device_limit_reached` or `monitoring.tenant.check_limit_reached` (account limits, see below), `monitoring.incident.opened`, `.updated`, `.acknowledged`, `.resolved`, `.commented`, `.renotify` (a reminder for an open, unacknowledged incident), `.escalated` (an escalation step fired), or `monitoring.webhook.test` |
 | `subject` | the incident id (or `group:<id>` for a grouped event) |
 | `data.account_id` | your account id |
 | `data.object` | the incident. It includes `object_key` and `object_name` (the port or outlet, for collector checks; `null` otherwise), `suppressed`, `root_incident_id` and `root_device_id`. After a suppression ended it carries `unsuppressed: true` |
@@ -79,3 +79,9 @@ foreach (explode(' ', $signatureHeader) as $candidate) {
 - **Reminders:** a channel with `repeat_interval_seconds` receives `monitoring.incident.renotify` for incidents that are still open and unacknowledged.
 - **Escalation:** a channel with `steps` receives `monitoring.incident.escalated` when a later step fires, with `data.route.step` and the step's labels merged into `data.route.labels`.
 - **Collectors:** each object of a collector check has its own incident; `data.object.object_key` names it. If the device stops reporting an object, its incident resolves with `resolved_by: "object-gone"`.
+
+## Account limit events
+
+When creating a host or a check brings the account to its limit, a channel receives `monitoring.tenant.device_limit_reached` or `monitoring.tenant.check_limit_reached`; the next create then fails with 409 `limit-reached`. They are not incidents: `subject` is `tenant:<id>`, `data.object_type` is `Monitoring\Tenants`, `data.object` is `{"tenant_id", "resource": "devices"|"checks", "limit", "count"}`, and `data.device` and `data.check` are `null`.
+
+A channel gets them by default unless it filters on severity, host type, tags, sites or checks (a limit event has none of those). **Your receiver must ignore event types it does not know**, so new event types never break it: check `type` before reading `data.device` or `data.check`.
