@@ -107,7 +107,7 @@ Show a green or red result with the message, and a "Test again" button.
 
 `POST /monitoring/servers/{server_id}/tenants/{account_id}/restore` (no body), where `{account_id}` is the customer account's UUID.
 
-When an account's tenant was deleted on the monitoring service, every customer call for that account answers `409 tenant-deleted`. This brings it back with its hosts, checks and history, and checks start again. Returns `{"data": {"status": "active"}}`. It is safe to call twice. It answers `404 not-found` once the tenant has been purged: the data is gone, and the customer's next call creates a fresh empty tenant automatically.
+A deleted tenant is restored automatically, and emptied, on the customer's next call (unless the account is suspended, then the customer gets `409 tenant-deleted`). This endpoint is the manual way: unlike the automatic path it restores the tenant **with** its hosts, checks and history, as they were. It brings the tenant back with its hosts, checks and history, and checks start again. Returns `{"data": {"status": "active"}}`. It is safe to call twice. It answers `404 not-found` once the tenant has been purged: the data is gone, and the customer's next call creates a fresh empty tenant automatically.
 
 ### Delete
 

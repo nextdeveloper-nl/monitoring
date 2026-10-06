@@ -42,7 +42,8 @@ Monitoring errors have one shape:
 | --- | --- | --- |
 | 403 | `forbidden` | the user is read-only: disable write actions (see roles) |
 | 403 | `tenant-suspended` | the account is suspended: show a banner, reads still work |
-| 409 | `tenant-deleted` | monitoring was removed for this account on the monitoring service: show "Monitoring is unavailable for this account. Contact support." and disable every action; an administrator can restore it |
+| 409 | `tenant-deleted` | the account's monitoring was removed on the monitoring service and could not be restored automatically (the account is suspended): show "Monitoring is unavailable for this account. Contact support." and disable every action. A deleted tenant of an active account is restored automatically, see below |
+| 503 | `monitoring-preparing` | the account's monitoring is being restored by another request right now: show the "preparing" wait screen and retry after a few seconds |
 | 404 | `not-found` | object gone or not in this account |
 | 409 | `limit-reached`, `already-exists`, `in-use`, `has-children`, `plugin-change` | show `message`; the action conflicts with current state |
 | 422 | `invalid-value` | field problem; `message` names the field (for example `plugin: unknown plugin "x"`) |
@@ -512,3 +513,7 @@ Pick a sensible form for each: the UI should show the plugin's own fields, with 
 1. `GET /alerts?status=active` → pick an alert.
 2. `GET /hosts/{alert.host_id}/metrics?name[]=total_ms&from=<an hour before opened_at>` to see what happened.
 3. `POST /alerts/{id}/acknowledge` with a note; later `POST /alerts/{id}/resolve` once fixed.
+
+## 9. A restored account starts empty
+
+If an account's monitoring was removed on the monitoring service, the first customer call after that restores it automatically and **empties it**: the old hosts, checks, channels and sites are deleted, so the customer starts from a clean account (checks that used to run, and be billed, do not come back). The first call can take a few seconds longer. After it, `GET /hosts` returns an empty list and the first-run "add your first host" state applies. A suspended account is not restored; it gets `409 tenant-deleted` until it is unsuspended. The check that notices a deleted tenant runs at most every five minutes per account, so a delete can show up as one or two plain `404 not-found` answers before the restore happens; treat that like any `404` and refresh.

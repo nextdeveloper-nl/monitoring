@@ -85,4 +85,10 @@ The host application's global `Authorize` middleware maps a URL of at most two s
 
 ### Tenant health
 
-The local `monitoring_tenants` row is created once and trusted afterwards, but the monitoring service can soft-delete or purge a tenant. `MonitoringProxyService` therefore checks the tenant on the service every five minutes: a **deleted** tenant answers `409 tenant-deleted` (an administrator restores it with `POST /monitoring/servers/{server_id}/tenants/{account_id}/restore`); a tenant that is **gone** (purged, or the service was reset) is created again, empty. Every failed monitoring request is logged with the upstream call, status, problem type and request id.
+The local `monitoring_tenants` row is created once and trusted afterwards, but the monitoring service can soft-delete or purge a tenant. `MonitoringProxyService` therefore checks the tenant on the service every five minutes:
+
+- **deleted**: restored automatically and then emptied (`TenantRecoveryService` deletes its routes, webhooks, hosts with their checks, and sites), so nothing from before comes back or is billed. The host application can veto the restore by binding `GuardsTenantRestore` (the PlusClouds app refuses for suspended accounts); a vetoed or unsupported restore answers `409 tenant-deleted`. One request restores at a time (cache lock); `meta.wipe_pending` on the local row makes the next call finish emptying if it failed midway. Credentials and past incident history are not touched.
+- **gone** (purged, or the service was reset): created again, empty.
+- Administrators can restore a deleted tenant as it was (with its content) with `POST /monitoring/servers/{server_id}/tenants/{account_id}/restore`.
+
+Every failed monitoring request is logged with the upstream call, status, problem type and request id.

@@ -13,7 +13,9 @@ use NextDeveloper\Monitoring\Contracts\ListsPlugins;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
 use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
+use NextDeveloper\Monitoring\Contracts\GuardsTenantRestore;
 use NextDeveloper\Monitoring\Contracts\ManagesSites;
+use NextDeveloper\Monitoring\Contracts\RestoresTenants;
 use NextDeveloper\Monitoring\DataTransferObjects\Alert;
 use NextDeveloper\Monitoring\DataTransferObjects\AlertRoute;
 use NextDeveloper\Monitoring\DataTransferObjects\Webhook;
@@ -589,7 +591,7 @@ class MonitoringProxyService
      * The check is cached for five minutes per tenant.
      *
      *  - active or suspended: fine (a suspended tenant refuses writes itself)
-     *  - deleted: answer 409 tenant-deleted with a clear message; an administrator restores it
+     *  - deleted: restored automatically and emptied (see recoverDeletedTenant); only if the host application allows it
      *  - gone (purged, or the service was reset): create it again, empty, so the customer is not locked out
      */
     private function verifiedTenant(): MonitoringTenant
@@ -617,7 +619,32 @@ class MonitoringProxyService
         }
 
         if ($remote && $remote->status === TenantStatus::Deleted) {
-            Log::warning("[Monitoring] tenant {$tenant->external_tenant_id} is deleted on the monitoring service.");
+            $this->recoverDeletedTenant($tenant, $driver);
+        } elseif (! empty($tenant->meta['wipe_pending'])) {
+            // A previous recovery restored the tenant but did not finish emptying it: finish now.
+            $this->emptyRestoredTenant($tenant, $driver);
+        }
+
+        Cache::put($cacheKey, true, now()->addMinutes(5));
+
+        return $tenant;
+    }
+
+    /**
+     * Restore a deleted tenant and empty it, so the customer is not locked out and nothing from before comes back.
+     * The tenant had been removed on the monitoring service, and a plain restore would bring back every host, check and
+     * channel and start the checks (and their billing) again, so the old items are deleted right after the restore.
+     *
+     * Refused (409 tenant-deleted) when the driver cannot restore, or the host application's guard vetoes it (for
+     * example a suspended account). One request does the work at a time; the others wait for it. If emptying fails
+     * midway, the tenant is marked and the next call finishes the job.
+     */
+    private function recoverDeletedTenant(MonitoringTenant $tenant, $driver): void
+    {
+        $guard = app()->bound(GuardsTenantRestore::class) ? app(GuardsTenantRestore::class) : null;
+
+        if (! $driver instanceof RestoresTenants || ($guard && ! $guard->allowsRestore($tenant))) {
+            Log::warning("[Monitoring] tenant {$tenant->external_tenant_id} is deleted on the monitoring service and is not restored automatically.");
 
             throw new ApiRequestFailed('Tenant is deleted on the monitoring service.', 409, [
                 'type' => 'https://monitor.plusclouds.com/problems/tenant-deleted',
@@ -625,9 +652,29 @@ class MonitoringProxyService
             ]);
         }
 
-        Cache::put($cacheKey, true, now()->addMinutes(5));
+        Cache::lock("monitoring:restore:{$tenant->external_tenant_id}", 120)->block(30, function () use ($tenant, $driver) {
+            // Another request may have done it while this one waited.
+            if ($driver->getTenant($tenant->external_tenant_id)->status !== TenantStatus::Deleted) {
+                return;
+            }
 
-        return $tenant;
+            // Marked first: if anything below fails, the next call finishes emptying the tenant.
+            $tenant->update(['meta' => array_merge($tenant->meta ?? [], ['wipe_pending' => true])]);
+
+            $driver->restoreTenant($tenant->external_tenant_id);
+            Log::warning("[Monitoring] tenant {$tenant->external_tenant_id} was deleted on the monitoring service and was restored automatically.");
+
+            $this->emptyRestoredTenant($tenant, $driver);
+        });
+    }
+
+    private function emptyRestoredTenant(MonitoringTenant $tenant, $driver): void
+    {
+        app(TenantRecoveryService::class)->empty($driver, $tenant->external_tenant_id);
+
+        $meta = $tenant->meta ?? [];
+        unset($meta['wipe_pending']);
+        $tenant->update(['meta' => array_merge($meta, ['restored_at' => now()->toAtomString()])]);
     }
 
     /**

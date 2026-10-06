@@ -42,6 +42,9 @@ trait HandlesMonitoringResponses
             return response()->json(['error' => ['type' => 'invalid-value', 'message' => $e->getMessage()]], 422);
         } catch (UnsupportedOperation $e) {
             return response()->json(['error' => ['type' => 'not-supported', 'message' => $e->getMessage()]], 501);
+        } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
+            // Another request is restoring this account's monitoring right now.
+            return response()->json(['error' => ['type' => 'monitoring-preparing', 'message' => 'Monitoring is being prepared for this account. Try again in a moment.']], 503);
         } catch (MonitoringException $e) {
             // Includes "no monitoring server configured".
             Log::error('[Monitoring] '.get_class($e).': '.$e->getMessage());
