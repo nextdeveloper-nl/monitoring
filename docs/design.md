@@ -77,7 +77,7 @@ Three roles, one class each in `src/Authorization/Roles`, following the S3 and D
 
 Customer data (hosts, checks, alerts) lives on the monitoring service, not in our database, so the table permissions in the roles only cover `monitoring_servers` and `monitoring_tenants`. What a customer may do is decided by `MonitoringProxyService`: users holding any role in `monitoring.operator_roles` become **operator** members of their tenant, everybody else is **read-only**; the monitoring service enforces it. `monitoring.admin_roles` decides who may call `/monitoring/servers`.
 
-`monitoring.operator_roles` still contains `cloud-resource-owner` so nothing changes while `monitoring-manager` is rolled out. The role rows must exist in `iam_roles` (create them with `RolesService::getRole()` or `leo:generate-roles` in the host application) and the host application decides who gets them (`register.default_roles`, `owner_roles`).
+Account owners get `monitoring-manager` and every user gets `monitoring-user` (host application: `register.owner_roles`, `register.default_roles`; existing users are backfilled with `leo:assign-monitoring-roles`). The role rows must exist in `iam_roles` (create them with `RolesService::getRole()` or `leo:generate-roles` in the host application) and the host application decides who gets them (`register.default_roles`, `owner_roles`).
 
 ### Route authorization (important)
 

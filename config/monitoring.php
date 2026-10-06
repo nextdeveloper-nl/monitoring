@@ -10,10 +10,8 @@ return [
     /*
      * Roles that decide what a user may do in their account's monitoring tenant. Everything in operator_roles acts as
      * an operator (configure, acknowledge, run); everyone else is read-only. Nobody maps to the monitoring service's admin.
-     * cloud-resource-owner is kept so behaviour does not change while monitoring-manager is being rolled out;
-     * drop it from this list once monitoring-manager is granted.
      */
-    'operator_roles' => ['monitoring-manager', 'monitoring-admin', 'cloud-resource-owner'],
+    'operator_roles' => ['monitoring-manager', 'monitoring-admin'],
 
     /*
      * Roles that may manage monitoring servers (/monitoring/servers).
