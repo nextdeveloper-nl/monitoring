@@ -42,6 +42,7 @@ Monitoring errors have one shape:
 | --- | --- | --- |
 | 403 | `forbidden` | the user is read-only: disable write actions (see roles) |
 | 403 | `tenant-suspended` | the account is suspended: show a banner, reads still work |
+| 409 | `tenant-deleted` | monitoring was removed for this account on the monitoring service: show "Monitoring is unavailable for this account. Contact support." and disable every action; an administrator can restore it |
 | 404 | `not-found` | object gone or not in this account |
 | 409 | `limit-reached`, `already-exists`, `in-use`, `has-children`, `plugin-change` | show `message`; the action conflicts with current state |
 | 422 | `invalid-value` | field problem; `message` names the field (for example `plugin: unknown plugin "x"`) |

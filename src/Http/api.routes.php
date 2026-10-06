@@ -82,6 +82,7 @@ Route::prefix('monitoring')->group(
                 Route::patch('{server_id}', 'Servers\ServersController@update');
                 Route::delete('{server_id}', 'Servers\ServersController@destroy');
                 Route::post('{server_id}/test', 'Servers\ServersController@test');
+                Route::post('{server_id}/tenants/{account_id}/restore', 'Servers\ServersController@restoreTenant');
             }
         );
     }

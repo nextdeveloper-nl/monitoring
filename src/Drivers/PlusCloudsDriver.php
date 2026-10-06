@@ -11,6 +11,7 @@ use NextDeveloper\Monitoring\Contracts\ChecksConnection;
 use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
 use NextDeveloper\Monitoring\Contracts\ListsPlugins;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
+use NextDeveloper\Monitoring\Contracts\RestoresTenants;
 use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ReportsUsage;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
@@ -44,12 +45,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants
 {
     /** Set by actingAs(): the user whose role applies to tenant calls. Null = the platform, with full rights in the tenant. */
     protected ?string $actor = null;
 
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore'];
 
     public function driverName(): string
     {
@@ -111,6 +112,12 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         $this->request('DELETE', $this->tenantPath($tenantId));
     }
 
+    /** Undo a soft delete (platform key). The tenant must not have been purged yet, or the server answers 404. */
+    public function restoreTenant(string $tenantId): Tenant
+    {
+        return $this->toTenant($this->request('POST', $this->tenantPath($tenantId).'/restore'), $tenantId);
+    }
+
     protected function setStatus(string $tenantId, string $status): Tenant
     {
         return $this->toTenant($this->request('PATCH', $this->tenantPath($tenantId), ['status' => $status]), $tenantId);
@@ -126,7 +133,11 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         return new Tenant(
             $externalId,
             (string) ($data['name'] ?? $externalId),
-            ($data['status'] ?? 'active') === 'suspended' ? TenantStatus::Suspended : TenantStatus::Active,
+            match ($data['status'] ?? 'active') {
+                'suspended' => TenantStatus::Suspended,
+                'deleted' => TenantStatus::Deleted,
+                default => TenantStatus::Active,
+            },
             $data,
         );
     }

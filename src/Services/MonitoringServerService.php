@@ -3,7 +3,9 @@
 namespace NextDeveloper\Monitoring\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use NextDeveloper\Monitoring\Contracts\ChecksConnection;
+use NextDeveloper\Monitoring\Contracts\RestoresTenants;
 use NextDeveloper\Monitoring\Exceptions\MonitoringException;
 use NextDeveloper\Monitoring\Models\MonitoringServer;
 use NextDeveloper\Monitoring\MonitoringManager;
@@ -138,6 +140,27 @@ class MonitoringServerService
         } catch (Throwable $e) {
             return ['ok' => false, 'error' => 'The connection test failed.'];
         }
+    }
+
+    /**
+     * Bring back a tenant that was deleted on this server (platform key), before it is purged. The tenant becomes active
+     * with its devices, checks and history; checks start again. Fails with 404 once it was purged.
+     *
+     * @return array{status: string}
+     */
+    public function restoreTenant(string $serverUuid, string $accountUuid): array
+    {
+        $server = $this->find($serverUuid);
+        $driver = $this->manager->forServer($server);
+
+        if (! $driver instanceof RestoresTenants) {
+            throw new \InvalidArgumentException('This driver cannot restore tenants.');
+        }
+
+        $tenant = $driver->restoreTenant($accountUuid);
+        Cache::forget("monitoring:tenant-verified:{$accountUuid}");
+
+        return ['status' => $tenant->status->value];
     }
 
     private function find(string $uuid): MonitoringServer

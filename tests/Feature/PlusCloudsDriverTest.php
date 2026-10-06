@@ -222,7 +222,7 @@ class PlusCloudsDriverTest extends TestCase
 
     public function test_push_is_unsupported_and_capabilities_listed(): void
     {
-        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection'] as $capability) {
+        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore'] as $capability) {
             $this->assertTrue($this->driver->supports($capability), $capability);
         }
         $this->assertFalse($this->driver->supports('push'));
@@ -380,6 +380,19 @@ class PlusCloudsDriverTest extends TestCase
         $this->fake(['*' => Http::response(['type' => 'https://monitor.plusclouds.com/problems/unauthorized', 'status' => 401], 401)]);
         $this->expectException(ApiRequestFailed::class);
         $this->driver->checkConnection();
+    }
+
+    public function test_deleted_tenants_are_reported_as_deleted_and_can_be_restored(): void
+    {
+        $this->fake(['*' => Http::response(['items' => [['id' => 'srv-uuid', 'name' => 'Acme', 'status' => 'deleted']], 'next_cursor' => null])]);
+        $this->assertSame(TenantStatus::Deleted, $this->driver->getTenant(self::TENANT)->status);
+
+        $this->fake(['*' => Http::response(['id' => 'srv-uuid', 'name' => 'Acme', 'status' => 'active'])]);
+        $tenant = $this->driver->restoreTenant(self::TENANT);
+
+        $this->assertSame('POST', $this->sent()->method());
+        $this->assertStringEndsWith('/v1/tenants/by-external-id/'.self::TENANT.'/restore', $this->sent()->url());
+        $this->assertSame(TenantStatus::Active, $tenant->status);
     }
 
     public function test_problem_response_becomes_api_request_failed_with_body(): void

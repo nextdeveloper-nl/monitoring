@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use NextDeveloper\Monitoring\Exceptions\ApiRequestFailed;
 use NextDeveloper\IAM\Helpers\UserHelper;
 
 /**
@@ -91,6 +92,12 @@ class ServersController extends Controller
         }, 204);
     }
 
+    /** Undo the deletion of an account's tenant on this server (before it is purged). Answers 404 once purged. */
+    public function restoreTenant(string $serverId, string $accountId): JsonResponse
+    {
+        return $this->run(fn () => ['data' => $this->service->restoreTenant($serverId, $accountId)]);
+    }
+
     /** Tries the stored credentials against the server. A failed connection is a normal answer (ok=false), not an error. */
     public function test(string $serverId): JsonResponse
     {
@@ -109,6 +116,16 @@ class ServersController extends Controller
             return response()->json(['error' => ['type' => 'invalid-value', 'message' => $e->getMessage()]], 422);
         } catch (\DomainException $e) {
             return response()->json(['error' => ['type' => 'conflict', 'message' => $e->getMessage()]], 409);
+        } catch (ApiRequestFailed $e) {
+            // The monitoring service refused (for example 404 for a tenant that was purged): say so instead of a 500.
+            Log::warning('[MonitoringServersController] '.$e->getMessage(), ['status' => $e->status]);
+            $problem = is_array($e->body) ? $e->body : [];
+            $passThrough = in_array($e->status, [400, 401, 403, 404, 409, 422], true);
+
+            return response()->json(['error' => [
+                'type' => $passThrough ? basename((string) ($problem['type'] ?? 'monitoring-error')) : 'monitoring-unavailable',
+                'message' => $passThrough ? ($problem['detail'] ?? $problem['title'] ?? 'Monitoring request failed.') : 'The monitoring service is unavailable.',
+            ]], $passThrough ? $e->status : 502);
         } catch (\Throwable $e) {
             Log::error('[MonitoringServersController] '.get_class($e).': '.$e->getMessage());
 

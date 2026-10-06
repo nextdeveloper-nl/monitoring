@@ -82,3 +82,7 @@ Account owners get `monitoring-manager` and every user gets `monitoring-user` (h
 ### Route authorization (important)
 
 The host application's global `Authorize` middleware maps a URL of at most two segments to `<module>_<object>:<operation>` (`GET /monitoring/hosts` is `monitoring_hosts:read`, `POST /monitoring/hosts` is `monitoring_hosts:create`, `/monitoring/tenant` is `monitoring_tenant:read`) and answers 403 unless one of the user's roles lists it. So **a user needs a monitoring role to reach any of these URLs, and every new top-level route needs its operations added to the roles' `allowedOperations()`.** URLs with three or more segments (`/monitoring/hosts/{id}`, `.../checks`) are not checked there; the monitoring service enforces the member role on those. `/monitoring/servers/{id}` is protected by the controller (`monitoring.admin_roles`).
+
+### Tenant health
+
+The local `monitoring_tenants` row is created once and trusted afterwards, but the monitoring service can soft-delete or purge a tenant. `MonitoringProxyService` therefore checks the tenant on the service every five minutes: a **deleted** tenant answers `409 tenant-deleted` (an administrator restores it with `POST /monitoring/servers/{server_id}/tenants/{account_id}/restore`); a tenant that is **gone** (purged, or the service was reset) is created again, empty. Every failed monitoring request is logged with the upstream call, status, problem type and request id.

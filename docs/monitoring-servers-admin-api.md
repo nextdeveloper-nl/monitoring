@@ -103,6 +103,12 @@ Show a green or red result with the message, and a "Test again" button.
 - Changing the default does **not** move customers who already have a tenant on another server. They stay where they are.
 - Returns the updated server.
 
+### Restore a deleted tenant
+
+`POST /monitoring/servers/{server_id}/tenants/{account_id}/restore` (no body), where `{account_id}` is the customer account's UUID.
+
+When an account's tenant was deleted on the monitoring service, every customer call for that account answers `409 tenant-deleted`. This brings it back with its hosts, checks and history, and checks start again. Returns `{"data": {"status": "active"}}`. It is safe to call twice. It answers `404 not-found` once the tenant has been purged: the data is gone, and the customer's next call creates a fresh empty tenant automatically.
+
 ### Delete
 
 `DELETE /monitoring/servers/{server_id}` returns `204`. It is refused with `409 conflict` while the server still has tenants (`tenants` greater than 0), because those customers would lose their monitoring. Show the message and offer "Switch off" instead (`PATCH` with `is_active: false`).

@@ -4,6 +4,7 @@ namespace NextDeveloper\Monitoring\Services;
 
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use NextDeveloper\IAM\Helpers\UserHelper;
 use Carbon\Carbon;
@@ -23,6 +24,7 @@ use NextDeveloper\Monitoring\DataTransferObjects\Host;
 use NextDeveloper\Monitoring\DataTransferObjects\MetricSeries;
 use NextDeveloper\Monitoring\DataTransferObjects\Site;
 use NextDeveloper\Monitoring\Exceptions\ApiRequestFailed;
+use NextDeveloper\Monitoring\Enums\TenantStatus;
 use NextDeveloper\Monitoring\Exceptions\UnsupportedOperation;
 use NextDeveloper\Monitoring\Models\MonitoringTenant;
 use NextDeveloper\Monitoring\MonitoringManager;
@@ -61,7 +63,7 @@ class MonitoringProxyService
 
     public function tenantInfo(): array
     {
-        $tenant = $this->tenant();
+        $tenant = $this->verifiedTenant();
 
         return [
             'name' => $tenant->name,
@@ -581,12 +583,60 @@ class MonitoringProxyService
     // ---- internals ----
 
     /**
+     * The local tenant row, after checking that the monitoring service still has the tenant and it is usable.
+     * The local row is created once and trusted afterwards, so it can go stale: the service may have soft-deleted the
+     * tenant (its devices and checks are then unreachable, and every call answers 404 "Not found") or purged it (gone).
+     * The check is cached for five minutes per tenant.
+     *
+     *  - active or suspended: fine (a suspended tenant refuses writes itself)
+     *  - deleted: answer 409 tenant-deleted with a clear message; an administrator restores it
+     *  - gone (purged, or the service was reset): create it again, empty, so the customer is not locked out
+     */
+    private function verifiedTenant(): MonitoringTenant
+    {
+        $tenant = $this->tenant();
+        $cacheKey = "monitoring:tenant-verified:{$tenant->external_tenant_id}";
+
+        if (Cache::get($cacheKey)) {
+            return $tenant;
+        }
+
+        $driver = $this->manager->forTenant($tenant);
+
+        try {
+            $remote = $driver->getTenant($tenant->external_tenant_id);
+        } catch (ApiRequestFailed $e) {
+            if ($e->status !== 404) {
+                throw $e;
+            }
+
+            // Not on the service any more: re-provision with the same external id (idempotent).
+            $driver->createTenant($tenant->name, ['external_id' => $tenant->external_tenant_id]);
+            Log::warning("[Monitoring] tenant {$tenant->external_tenant_id} was missing on the monitoring service and was created again.");
+            $remote = null;
+        }
+
+        if ($remote && $remote->status === TenantStatus::Deleted) {
+            Log::warning("[Monitoring] tenant {$tenant->external_tenant_id} is deleted on the monitoring service.");
+
+            throw new ApiRequestFailed('Tenant is deleted on the monitoring service.', 409, [
+                'type' => 'https://monitor.plusclouds.com/problems/tenant-deleted',
+                'detail' => 'Monitoring was removed for this account. Contact support to restore it.',
+            ]);
+        }
+
+        Cache::put($cacheKey, true, now()->addMinutes(5));
+
+        return $tenant;
+    }
+
+    /**
      * @return array{0: \NextDeveloper\Monitoring\Contracts\MonitoringDriver, 1: string} driver and the tenant id to call it with.
      * The driver acts as the current user, so the monitoring service applies that user's role (and audits their name).
      */
     private function context(): array
     {
-        $tenant = $this->tenant();
+        $tenant = $this->verifiedTenant();
         $driver = $this->manager->forTenant($tenant);
 
         if ($driver instanceof ManagesMembers) {
