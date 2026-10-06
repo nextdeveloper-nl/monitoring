@@ -52,3 +52,15 @@ Target: the PlusClouds monitoring server (Go, REST, OpenAPI 3.1; spec at `/v1/op
 ## Not covered yet
 
 Server API keys, audit log, members and plugin manifests are outside the current contract; they can become optional capability interfaces later.
+
+## HTTP API (v0.3.0)
+
+The module serves the monitoring HTTP API itself, in the same style as the IAM module: `src/Http/api.routes.php` is registered by the service provider (switch off with `leo.allowed_routes.monitoring = false`) and served under `/monitoring`. Controllers are per resource (`Hosts`, `Checks`, `Alerts`, `Channels`, `Sites`, `Plugins`, `Tenant`, `Servers`) and only validate and delegate to `MonitoringProxyService` and `MonitoringServerService`.
+
+- Customer endpoints act for the logged-in user's current account (the tenant is created on first use) and make the user a tenant member with a role mapped from their account role.
+- `/monitoring/servers` is platform administration for system administrators; credentials are write-only.
+- The controllers use `NextDeveloper\IAM\Helpers\UserHelper` for the current user, account and roles, so the module expects the IAM package in the host application.
+- Not in the module: the glue to other modules (account suspension, billing usage emitter) stays in the host application.
+- Route caching: the provider does not register routes when they are cached, so clear the route cache after upgrading the module.
+
+The API reference for UI developers: `docs/monitoring-ui-api.md` (customer), `docs/monitoring-servers-admin-api.md` (admin), `docs/monitoring-webhooks.md` (receiving alerts).
