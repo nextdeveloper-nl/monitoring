@@ -108,6 +108,13 @@ Host object:
 - `status.open_incidents`: number of open alerts on the host.
 - `type` is one of: `network`, `server`, `bmc`, `camera`, `web`, `hypervisor_pool`, `hypervisor_host`, `vm`, `iot`, `ups`, `pdu`, `sensor`, `llm_endpoint`, `llm_application`, `other`. Offer a friendly label and icon for each; `web`, `server`, `network`, `vm` and `other` are the common ones.
 - `tags` is a free map of string to string.
+- `discovered` is `null` for hosts the customer created. For hosts that a **collector discovered** (an XCP-ng pool check, `xapi.pool`, turns every pool host and VM into a host of its own, types `hypervisor_host` and `vm`) it is `{"check_id": "<the pool check>", "key": "vm:<uuid>", "gone_at": null}`. Treat these differently in the list: show a badge ("discovered from <pool>"), group them under the pool, and:
+  - only `tags`, `notes` and `external_id` can be edited; renaming, retyping or moving them is refused (`422`), and deleting one is refused too (delete the pool check to remove them all). Hide those actions;
+  - a running VM's `parent_id` is its pool host, a halted VM's is the pool host device; a migration changes `parent_id` but not the host `id`;
+  - they do not count toward the account's host limit and are not billed, but checks the customer adds on them are billed normally;
+  - when `gone_at` is set the pool stopped reporting the host; it is deleted 7 days later. Show it greyed out as "removed";
+  - their alerts and graphs belong to their own host id (`GET /hosts/{host_id}/metrics?...`).
+  A pool can add hundreds of hosts at once, so the host list can grow suddenly: use the `type` and `availability` filters, and expect to need paging (see section 6).
 
 ### 3.3 Add and edit a host
 
@@ -458,6 +465,7 @@ A plugin with `kind: "collector"` (for example `snmp.interfaces`) reports **many
 ```
 
 - `phase`, `status` and `since` mean what they do on a check (3.5), but per object. `labels` are free text from the device; show `alias` as a subtitle.
+- `host_id` is set for collectors that create hosts of their own (an `xapi.pool` check: a VM object has the VM's host id), `null` otherwise; open that host for its own alerts and graphs.
 - `gone_at` is set when the device stopped reporting the object (a port filtered out, a card removed). Gone objects are kept for 30 days; show them greyed out, and offer a "Hide removed" toggle that sends `include_gone=false`.
 - Each object has its own alert: a 48-port switch with two ports down has two alerts, each with `object_key` and `object_name`. When the device itself does not answer there is one alert for the check (`object_key` is `null`), not one per port.
 - Graph per object: `GET /hosts/{host_id}/metrics` and `.../metrics/series` accept `object=Gi1/0/2` and every series carries `object`. Interface metrics: `in_bps`, `out_bps`, `in_errors_rate`, `out_errors_rate`, `in_discards_rate`, `out_discards_rate`, `oper_status`, `speed_bps`.
@@ -526,7 +534,8 @@ Available on checks whose plugin has a `whoopsy_metric` in `GET /plugins` (`http
 - `min_interval_seconds` is the plugin's own floor. Customers have a higher floor of 30 seconds, so use `max(plugin floor, 30)` as the minimum in the form.
 - `kind` is `check` (one result per run) or `collector` (one result per object, for example every port of a switch; see 3.12).
 - `credential_types` lists the credential kinds a check of this type can use (empty: none needed). A plugin with credential types needs a credential in the `auth` role: create it first (3.11), then pass its id when you create the check. `http` and `icmp` work without one.
-- Collectors available now: `snmp.interfaces` (ports of a switch), `snmp.pdu` and `snmp.sensor` (APC power and environment), `redfish.health` (server hardware through its BMC: CPU, memory, drives, fans, power supplies, temperatures; needs a `redfish` credential, a read-only BMC account). Each is one check for billing, however many objects it has.
+- Collectors available now: `xapi.pool` (an XCP-ng pool: its hosts, VMs and storage repositories; needs an `xapi` credential, a read-only XCP-ng account; add it on the pool master's host), `snmp.interfaces` (ports of a switch), `snmp.pdu` and `snmp.sensor` (APC power and environment), `redfish.health` (server hardware through its BMC: CPU, memory, drives, fans, power supplies, temperatures; needs a `redfish` credential, a read-only BMC account). Each is one check for billing, however many objects it has.
+- `camera.snapshot` (a plain check) fetches a picture from an IP camera and judges it: covered lens or black picture, frozen picture, too dark, overexposed, blurred, or the camera moved. It needs an `rtsp` or `http_basic` credential; its config is in `config_schema` (vendor `auto` by default, which tries Hikvision, Dahua, Axis and ONVIF).
 - The list includes plugins that customers cannot always use yet. SNMP plugins (`snmp.system`, `snmp.get`, `snmp.ups`, and the `snmp.interfaces` collector) talk to devices that are usually on private networks, which customers cannot reach until remote probes exist; such a check fails with an explanation in its output. Offer them, but explain that the device must be reachable from the internet.
 
 The two types that exist today, for reference:

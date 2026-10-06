@@ -604,6 +604,8 @@ class MonitoringProxyService
             'last_output' => $o['last_output'] ?? null,
             'last_metrics' => (object) ($o['last_metrics'] ?? []),
             'incident_id' => $o['incident_id'] ?? null,
+            // the discovered device the object belongs to (a VM), when it is not the check's own host
+            'host_id' => $o['device_id'] ?? null,
             'first_seen_at' => $o['first_seen_at'] ?? null,
             'last_seen_at' => $o['last_seen_at'] ?? null,
             'gone_at' => $o['gone_at'] ?? null,
@@ -1069,6 +1071,11 @@ class MonitoringProxyService
             'parent_id' => $h->raw['parent_id'] ?? null,
             'external_id' => $h->externalId,
             'status' => $h->raw['status'] ?? ['availability' => $h->status->value],
+            // Set when a collector (an xapi.pool check) discovered this device: a VM or a pool host. null for hosts the
+            // customer created. A discovered host follows the collector, only tags, notes and external id are editable,
+            // it does not count toward the host limit, is not billed, and disappears 7 days after the collector stops
+            // reporting it (gone_at) or with the collector check.
+            'discovered' => $h->raw['discovered'] ?? null,
         ];
     }
 
