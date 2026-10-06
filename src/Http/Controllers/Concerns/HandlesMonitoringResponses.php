@@ -25,6 +25,15 @@ trait HandlesMonitoringResponses
             $passThrough = in_array($e->status, [400, 403, 404, 409, 422], true);
             $problem = is_array($e->body) ? $e->body : [];
 
+            // Which upstream call failed (the message names method and path), its status, problem type and request id.
+            // Passed-through errors (404, 409, ...) used to be invisible, which made them impossible to trace.
+            Log::log($passThrough ? 'warning' : 'error', '[Monitoring] '.$e->getMessage(), [
+                'status' => $e->status,
+                'problem_type' => $problem['type'] ?? null,
+                'request_id' => $problem['request_id'] ?? null,
+                'detail' => $problem['detail'] ?? $problem['title'] ?? null,
+            ]);
+
             return response()->json(['error' => [
                 'type' => $passThrough ? basename((string) ($problem['type'] ?? 'monitoring-error')) : 'monitoring-unavailable',
                 'message' => $passThrough ? ($problem['detail'] ?? $problem['title'] ?? 'Monitoring request failed.') : 'The monitoring service is unavailable.',
@@ -35,6 +44,8 @@ trait HandlesMonitoringResponses
             return response()->json(['error' => ['type' => 'not-supported', 'message' => $e->getMessage()]], 501);
         } catch (MonitoringException $e) {
             // Includes "no monitoring server configured".
+            Log::error('[Monitoring] '.get_class($e).': '.$e->getMessage());
+
             return response()->json(['error' => ['type' => 'monitoring-unavailable', 'message' => 'The monitoring service is not available.']], 503);
         }
     }
