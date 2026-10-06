@@ -96,3 +96,7 @@ Every failed monitoring request is logged with the upstream call, status, proble
 ### Monitoring service v0.5 features exposed
 
 Credentials (`/monitoring/credentials`, `/monitoring/credential-types`; secrets write-only, manager and admin roles only), credentials on checks, collector objects (`/monitoring/checks/{id}/objects`), per-object alerts and metrics, alert `suppressed` and `object_key` filters, channel options (grouping, reminders, escalation steps, event types, site and check filters), channel preview (`POST /monitoring/channels/preview`) and bulk replay of failed deliveries. Boolean query filters accept `true`, `false`, `1` and `0`.
+
+### Whoopsy! (premium)
+
+`/monitoring/checks/{id}/whoopsy` (GET, PUT, DELETE, POST reset). It raises the check's price (weight times the service's multiplier, 5 at launch), so turning it on needs `confirm_price: true`; the status shows the billing effect. Only operators can change it (the monitoring service enforces the member role; these URLs have more than two segments, so the host application's route authorization does not check them).

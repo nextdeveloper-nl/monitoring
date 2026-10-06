@@ -223,7 +223,7 @@ class PlusCloudsDriverTest extends TestCase
 
     public function test_push_is_unsupported_and_capabilities_listed(): void
     {
-        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary'] as $capability) {
+        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary', 'whoopsy'] as $capability) {
             $this->assertTrue($this->driver->supports($capability), $capability);
         }
         $this->assertFalse($this->driver->supports('push'));
@@ -501,6 +501,35 @@ class PlusCloudsDriverTest extends TestCase
         $this->assertStringContainsString('agg=p99.9', $url);
         $this->assertStringContainsString('resolution=raw', $url);
         $this->assertStringContainsString('moving_window=7', $url);
+    }
+
+    public function test_whoopsy_calls_and_pricing(): void
+    {
+        $status = ['check_id' => 'c1', 'enabled' => true, 'settings' => ['window' => 5], 'band' => null];
+
+        $this->fake(['*' => Http::response($status)]);
+        $this->assertTrue($this->driver->setWhoopsy(self::TENANT, 'c1', ['window' => 5, 'deviations' => 2])['enabled']);
+        $this->assertSame('PUT', $this->sent()->method());
+        $this->assertStringEndsWith('/v1/checks/c1/whoopsy', $this->sent()->url());
+        $this->assertSame(['window' => 5, 'deviations' => 2], $this->sent()->data());
+
+        // no settings: the default window is named, because an empty body would be dropped
+        $this->driver->setWhoopsy(self::TENANT, 'c1', []);
+        $this->assertSame(['window' => 7], $this->sent()->data());
+
+        $this->driver->resetWhoopsy(self::TENANT, 'c1');
+        $this->assertSame('POST', $this->sent()->method());
+        $this->assertStringEndsWith('/v1/checks/c1/whoopsy/reset', $this->sent()->url());
+
+        $this->fake(['*' => Http::response(null, 204)]);
+        $this->driver->disableWhoopsy(self::TENANT, 'c1');
+        $this->assertSame('DELETE', $this->sent()->method());
+
+        $this->fake(['*' => Http::response(['default_weight' => 1, 'weights' => ['http' => 2], 'whoopsy_multiplier' => 5])]);
+        $pricing = $this->driver->whoopsyPricing(self::TENANT);
+        $this->assertSame(5, $pricing['multiplier']);
+        $this->assertSame(2, $pricing['weights']['http']);
+        $this->assertStringEndsWith('/v1/usage/weights', $this->sent()->url());
     }
 
     public function test_problem_response_becomes_api_request_failed_with_body(): void

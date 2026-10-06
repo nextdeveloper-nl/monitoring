@@ -19,6 +19,7 @@ use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ReportsUsage;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
 use NextDeveloper\Monitoring\Contracts\ManagesSites;
+use NextDeveloper\Monitoring\Contracts\ManagesWhoopsy;
 use NextDeveloper\Monitoring\DataTransferObjects\Alert;
 use NextDeveloper\Monitoring\DataTransferObjects\AlertRoute;
 use NextDeveloper\Monitoring\DataTransferObjects\Site;
@@ -49,12 +50,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects, SummarizesMetrics
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects, SummarizesMetrics, ManagesWhoopsy
 {
     /** Set by actingAs(): the user whose role applies to tenant calls. Null = the platform, with full rights in the tenant. */
     protected ?string $actor = null;
 
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary', 'whoopsy'];
 
     public function driverName(): string
     {
@@ -827,6 +828,38 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         $response = $this->request('GET', $this->path("checks/{$checkId}/objects"), [], $this->query(['status' => $status, 'include_gone' => $includeGone]), $this->tenantHeaders($tenantId));
 
         return collect($response['items'] ?? [])->values();
+    }
+
+    public function getWhoopsy(string $tenantId, string $checkId): array
+    {
+        return $this->request('GET', $this->path("checks/{$checkId}/whoopsy"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    public function setWhoopsy(string $tenantId, string $checkId, array $settings): array
+    {
+        // Turning it on with no settings uses the service defaults; an empty body would be dropped, so name the default window.
+        return $this->request('PUT', $this->path("checks/{$checkId}/whoopsy"), $settings ?: ['window' => 7], [], $this->tenantHeaders($tenantId));
+    }
+
+    public function disableWhoopsy(string $tenantId, string $checkId): void
+    {
+        $this->request('DELETE', $this->path("checks/{$checkId}/whoopsy"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    public function resetWhoopsy(string $tenantId, string $checkId): array
+    {
+        return $this->request('POST', $this->path("checks/{$checkId}/whoopsy/reset"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    public function whoopsyPricing(string $tenantId): array
+    {
+        $w = $this->request('GET', $this->path('usage/weights'), [], [], $this->tenantHeaders($tenantId));
+
+        return [
+            'multiplier' => (int) ($w['whoopsy_multiplier'] ?? 1),
+            'default_weight' => (int) ($w['default_weight'] ?? 1),
+            'weights' => $w['weights'] ?? [],
+        ];
     }
 
     public function pushMetrics(string $tenantId, string $hostId, iterable $metrics): void

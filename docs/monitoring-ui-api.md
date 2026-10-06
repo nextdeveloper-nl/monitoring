@@ -262,6 +262,7 @@ Filters on `GET /checks`: `host_id`, `plugin`, `enabled` (`true`, `false`, `1` o
 - `object_key` and `object_name` are set for alerts of a **collector** check (3.12): the object the alert is about, for example `Gi1/0/2`. They are `null` for a plain check. Show them next to the host name ("sw-core: Gi1/0/2 down").
 - `suppressed` is `true` when an upstream host check explains this alert (the switch is down, so the servers behind it are too). Suppressed alerts are not sent to channels while their root alert is open. Show them greyed out, "caused by <root>", using `root_incident_id` and `root_host_id`. Hide them by default with `?suppressed=false`.
 - `flapping` is `true` while the check keeps changing state; show a flapping badge.
+- `rule_id` and `rule_name` say what raised it: a threshold rule of the check, or `whoopsy` / `Whoopsy!` for the premium alerting (3.13).
 
 Actions (operators only):
 
@@ -463,6 +464,45 @@ A plugin with `kind: "collector"` (for example `snmp.interfaces`) reports **many
 - `POST /hosts/{host_id}/test` results gain an `objects` list for collectors: `[{"key", "name", "labels", "status", "output", "metrics"}]`; their `metrics` map is empty because collector metrics are per object.
 - The `snmp.interfaces` config (from `GET /plugins`): `include` / `exclude` (regular expressions on name or description), `types` (interface type numbers), `admin_up_only` (default true), `down_status` (`critical`, `warning` or `ok`, for interfaces that are admin up but oper down), `max_interfaces` (default 1000), and the SNMP `port`, `timeout_ms`, `retries`. Minimum interval 60 seconds.
 
+### 3.13 Whoopsy! (premium alerting)
+
+Whoopsy! alerts when a check's value leaves its own normal range, without the customer having to guess a threshold: the band is the moving average of the last N results plus or minus some standard deviations. With an average response time of 500 ms and a deviation of 100 ms, a result above 600 ms for three results in a row raises an alert. It suits response times that are not constant (a website that is normally 80 ms).
+
+**It is a paid extra: while it is on, the check is billed at a multiple of its normal price (today 5 times its weight, so an `http` check goes from weight 2 to 10).** The UI must show that before it can be turned on.
+
+Available on checks whose plugin has a `whoopsy_metric` in `GET /plugins` (`http`: `total_ms`, `icmp`: `rtt_avg_ms`, `snmp.get`: `value`). Collectors and plugins without one cannot use it (`422`). Only users with the manager role can change it; read-only users get `403` and the screen should be read-only for them.
+
+- `GET /checks/{check_id}/whoopsy` returns the status:
+
+```json
+{"data": {
+  "check_id": "…", "enabled": true,
+  "settings": {"metric": "total_ms", "window": 7, "deviations": 1, "consecutive": 3, "direction": "above", "min_delta": 0, "severity": "warning"},
+  "band": {"points": 7, "mean": 500, "stddev": 81.65, "lower": 418.35, "upper": 581.65, "last_value": 520, "consecutive_hits": 0, "alerting": false},
+  "billing": {"multiplier": 5, "plugin_weight": 2, "billed_weight": 10, "applies": true}
+}}
+```
+
+  `settings` and `band` are `null` while it is off, and `band` is also `null` until the check has run with it on. `band.points` counts the results learned so far: the band only applies once it reaches `settings.window`. `billing.applies` says whether the higher price is in effect now; show `plugin_weight` and `billed_weight` as "normal price x multiplier" and never invent a currency amount here.
+- `PUT /checks/{check_id}/whoopsy` turns it on or changes its settings. Every setting is optional:
+
+| Setting | Rules |
+| --- | --- |
+| `metric` | default: the plugin's `whoopsy_metric`; other plugins must name one |
+| `window` | 3 to 1000, default 7: how many recent results make the average |
+| `deviations` | above 0 up to 10, default 1: how wide the band is, in standard deviations |
+| `consecutive` | 1 to 100, default 3: results outside the band in a row before the alert |
+| `direction` | `above` (default), `below` or `both` |
+| `min_delta` | smallest half-width of the band, in the metric's unit (default 0); raise it to ignore tiny changes on very steady checks |
+| `severity` | `warning` (default) or `critical` |
+| `confirm_price` | **must be `true` when Whoopsy! is currently off**, otherwise `422 invalid-value` with a message stating the price. It is not needed to change the settings of a check that already has it on |
+
+  Flow: show the price (`billing`) and a clear confirmation ("Turn on Whoopsy! for this check? It is billed at 5 times the normal price while on."), and only then send `confirm_price: true`. The refused call changes nothing.
+- `DELETE /checks/{check_id}/whoopsy` turns it off (`204`). The normal price applies again from that moment.
+- `POST /checks/{check_id}/whoopsy/reset` accepts a new normal: the band is learned again from the next results and an open Whoopsy! alert resolves with the next result. `409 whoopsy-off` if it is off. Offer it as "This is the new normal" on a Whoopsy! alert: **the band stays at the last normal while results break it**, so a lasting slowdown keeps alerting until results return to the band or someone presses reset.
+- Alerts it raises have `rule_id` `"whoopsy"` and `rule_name` `"Whoopsy!"`; the summary says what happened, for example `Whoopsy!: total_ms = 1000, above 581.65 (moving average 500 ± 1 standard deviations of 81.65 over the last 7 results, 3 in a row)`. Show a Whoopsy! badge on them. Webhooks carry the same `data.check.rule_id`.
+- Changing a check (`PATCH /checks/{id}`) never changes Whoopsy!.
+
 ## 4. Plugins (check types)
 
 `GET /plugins` returns the check types the service offers. **Build the check form from this response instead of hard-coding types**, because new types are added over time (SNMP checks are on the way).
@@ -579,6 +619,10 @@ Pick a sensible form for each: the UI should show the plugin's own fields, with 
 | edit credential | `PATCH /credentials/{credential_id}` |
 | delete credential | `DELETE /credentials/{credential_id}` |
 | objects of a collector | `GET /checks/{check_id}/objects` |
+| Whoopsy! status | `GET /checks/{check_id}/whoopsy` |
+| Whoopsy! on or settings | `PUT /checks/{check_id}/whoopsy` |
+| Whoopsy! off | `DELETE /checks/{check_id}/whoopsy` |
+| Whoopsy! new normal | `POST /checks/{check_id}/whoopsy/reset` |
 | which channels would be notified | `POST /channels/preview` |
 | replay failed deliveries in bulk | `POST /channels/{channel_id}/deliveries/replay` |
 | list sites | `GET /sites` |

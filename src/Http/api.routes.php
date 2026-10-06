@@ -50,6 +50,10 @@ Route::prefix('monitoring')->group(
                 Route::delete('{check_id}', 'Checks\ChecksController@destroy');
                 Route::get('{check_id}/state', 'Checks\ChecksController@state');
                 Route::get('{check_id}/objects', 'Checks\ChecksController@objects');
+                Route::get('{check_id}/whoopsy', 'Whoopsy\WhoopsyController@show');
+                Route::put('{check_id}/whoopsy', 'Whoopsy\WhoopsyController@update');
+                Route::delete('{check_id}/whoopsy', 'Whoopsy\WhoopsyController@destroy');
+                Route::post('{check_id}/whoopsy/reset', 'Whoopsy\WhoopsyController@reset');
                 Route::post('{check_id}/run', 'Checks\ChecksController@run');
             }
         );

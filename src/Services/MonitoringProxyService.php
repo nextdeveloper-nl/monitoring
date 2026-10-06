@@ -17,6 +17,7 @@ use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
 use NextDeveloper\Monitoring\Contracts\GuardsTenantRestore;
 use NextDeveloper\Monitoring\Contracts\ManagesSites;
+use NextDeveloper\Monitoring\Contracts\ManagesWhoopsy;
 use NextDeveloper\Monitoring\Contracts\SummarizesMetrics;
 use NextDeveloper\Monitoring\Contracts\RestoresTenants;
 use NextDeveloper\Monitoring\DataTransferObjects\Alert;
@@ -75,7 +76,7 @@ class MonitoringProxyService
             'name' => $tenant->name,
             'status' => $tenant->status instanceof \BackedEnum ? $tenant->status->value : $tenant->status,
             'capabilities' => array_values(array_filter(
-                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors', 'summary'],
+                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors', 'summary', 'whoopsy'],
                 fn ($c) => $this->manager->forTenant($tenant)->supports($c),
             )),
         ];
@@ -288,6 +289,8 @@ class MonitoringProxyService
                 'description' => $m['description'] ?? null,
             ])->values()->all(),
             'credential_types' => $p['credential_types'] ?? [],
+            // the metric Whoopsy! watches by default; null: Whoopsy! is not available for this plugin (collectors, or no default metric)
+            'whoopsy_metric' => $p['whoopsy_metric'] ?? null,
         ])->values()->all();
     }
 
@@ -489,6 +492,92 @@ class MonitoringProxyService
     private function credential(Credential $c): array
     {
         return ['id' => $c->id, 'name' => $c->name, 'type' => $c->type, 'fields' => (object) $c->fields, 'secrets_set' => $c->secretsSet];
+    }
+
+    // ---- Whoopsy! (premium alerting: alert when a metric leaves its own band) ----
+
+    /**
+     * Whoopsy! status of a check, with what it costs. `billing.applies` is true while it is on: the check is then billed
+     * at `billed_weight` (its plugin's weight times the multiplier) instead of `plugin_weight`.
+     */
+    public function whoopsy(string $checkId): array
+    {
+        [$driver, $id] = $this->context();
+        $whoopsy = $this->whoopsyDriver($driver);
+
+        return $this->whoopsyStatus($whoopsy, $id, $checkId, $whoopsy->getWhoopsy($id, $checkId));
+    }
+
+    /**
+     * Turn Whoopsy! on or change its settings. Turning it ON changes the price of the check, so it needs the caller's
+     * explicit `confirm_price` = true; without it the answer is 422 stating the price. Changing the settings of a check
+     * that already has it on needs no confirmation (the price does not change).
+     *
+     * $settings: metric, window (3..1000), deviations (>0..10), consecutive (1..100), direction (above|below|both),
+     * min_delta, severity (warning|critical). Operators only (the monitoring service enforces it).
+     */
+    public function setWhoopsy(string $checkId, array $settings, bool $confirmPrice): array
+    {
+        [$driver, $id] = $this->context();
+        $whoopsy = $this->whoopsyDriver($driver);
+
+        $current = $whoopsy->getWhoopsy($id, $checkId);
+
+        if (! ($current['enabled'] ?? false) && ! $confirmPrice) {
+            $cost = $this->whoopsyCost($whoopsy, $id, $checkId);
+
+            throw new \InvalidArgumentException(sprintf(
+                'Whoopsy! is a premium feature: while it is on, this check is billed at %d times its normal price (weight %d instead of %d). Send confirm_price: true to turn it on.',
+                $cost['multiplier'], $cost['billed_weight'], $cost['plugin_weight'],
+            ));
+        }
+
+        return $this->whoopsyStatus($whoopsy, $id, $checkId, $whoopsy->setWhoopsy($id, $checkId, $settings));
+    }
+
+    public function disableWhoopsy(string $checkId): void
+    {
+        [$driver, $id] = $this->context();
+
+        $this->whoopsyDriver($driver)->disableWhoopsy($id, $checkId);
+    }
+
+    /** Accept a new normal: the band is learned again from the next results, and an open Whoopsy! alert resolves. */
+    public function resetWhoopsy(string $checkId): array
+    {
+        [$driver, $id] = $this->context();
+        $whoopsy = $this->whoopsyDriver($driver);
+
+        return $this->whoopsyStatus($whoopsy, $id, $checkId, $whoopsy->resetWhoopsy($id, $checkId));
+    }
+
+    private function whoopsyDriver($driver): ManagesWhoopsy
+    {
+        return $driver instanceof ManagesWhoopsy ? $driver : throw UnsupportedOperation::for($driver->driverName(), 'whoopsy');
+    }
+
+    /** @return array{multiplier: int, plugin_weight: int, billed_weight: int} */
+    private function whoopsyCost(ManagesWhoopsy $driver, string $tenantId, string $checkId): array
+    {
+        $pricing = $driver->whoopsyPricing($tenantId);
+        $plugin = $this->getCheck($checkId)['plugin'] ?? '';
+        $weight = (int) ($pricing['weights'][$plugin] ?? $pricing['default_weight']);
+
+        return ['multiplier' => $pricing['multiplier'], 'plugin_weight' => $weight, 'billed_weight' => $weight * $pricing['multiplier']];
+    }
+
+    private function whoopsyStatus(ManagesWhoopsy $driver, string $tenantId, string $checkId, array $status): array
+    {
+        $cost = $this->whoopsyCost($driver, $tenantId, $checkId);
+
+        return [
+            'check_id' => $status['check_id'] ?? $checkId,
+            'enabled' => (bool) ($status['enabled'] ?? false),
+            'settings' => $status['settings'] ?? null,
+            // the learned normal: points seen, mean, stddev, lower and upper limit, last value, hits in a row, alerting
+            'band' => $status['band'] ?? null,
+            'billing' => $cost + ['applies' => (bool) ($status['enabled'] ?? false)],
+        ];
     }
 
     // ---- collector objects (interfaces of a switch, outlets of a PDU, ...) ----
@@ -1018,6 +1107,9 @@ class MonitoringProxyService
             'root_incident_id' => $a->raw['root_incident_id'] ?? null,
             'root_host_id' => $a->raw['root_device_id'] ?? null,
             'flapping' => (bool) ($a->raw['flapping'] ?? false),
+            // what raised it: a threshold rule of the check, or "whoopsy" for Whoopsy! (rule_name "Whoopsy!")
+            'rule_id' => $a->raw['rule_id'] ?? null,
+            'rule_name' => $a->raw['rule_name'] ?? null,
         ];
     }
 
