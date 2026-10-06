@@ -13,7 +13,7 @@ Every customer account gets its own isolated tenant on the **default** server th
 ## 2. Access
 
 - Base path: `/monitoring/servers`, same API host and bearer login as the other API endpoints (for example `/iam`).
-- Only users with the `system-admin` role. Everyone else gets `403 {"error": {"type": "forbidden", ...}}` on every call, before any validation. Do not show the screen to other users; if a call returns 403, hide it.
+- Only users with the `monitoring-admin` role (the monitoring service owner) or the `system-admin` role. Everyone else gets `403 {"error": {"type": "forbidden", ...}}` on every call, before any validation. Do not show the screen to other users; if a call returns 403, hide it.
 - Success bodies are `{"data": ...}`. Deletes return `204` with no body.
 - Errors have the shape `{"error": {"type": "...", "message": "..."}}`, where `message` is safe to show. Field validation failures use the standard Laravel 422 body: `{"message": "...", "errors": {"field": ["..."]}}`.
 
@@ -116,7 +116,7 @@ Create form fields: Name, Driver (select, `plusclouds`), Address, Platform key (
 ## 6. Setting up the first server, step by step
 
 1. An operator deploys a monitoring service instance and creates a platform key on it (outside this API).
-2. A `system-admin` opens this screen and creates a server with that address and key.
+2. A `monitoring-admin` (or `system-admin`) opens this screen and creates a server with that address and key.
 3. Press Test connection. It must say `ok: true`.
 4. Make sure it is the default and active.
 5. Customers can now open the monitoring pages. Their tenants are created automatically on first use.

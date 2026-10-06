@@ -7,6 +7,19 @@ return [
      */
     'default_server' => env('MONITORING_DEFAULT_SERVER'),
 
+    /*
+     * Roles that decide what a user may do in their account's monitoring tenant. Everything in operator_roles acts as
+     * an operator (configure, acknowledge, run); everyone else is read-only. Nobody maps to the monitoring service's admin.
+     * cloud-resource-owner is kept so behaviour does not change while monitoring-manager is being rolled out;
+     * drop it from this list once monitoring-manager is granted.
+     */
+    'operator_roles' => ['monitoring-manager', 'monitoring-admin', 'cloud-resource-owner'],
+
+    /*
+     * Roles that may manage monitoring servers (/monitoring/servers).
+     */
+    'admin_roles' => ['monitoring-admin', 'system-admin'],
+
     'tables' => [
         'servers' => 'monitoring_servers',
         'tenants' => 'monitoring_tenants',

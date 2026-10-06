@@ -12,23 +12,32 @@ use NextDeveloper\IAM\Helpers\UserHelper;
 
 /**
  * Platform administration of monitoring servers (the connection to a monitoring service instance).
- * Only system administrators; customers never reach this. Credentials are write-only and never returned.
+ * Only monitoring administrators (config monitoring.admin_roles); customers never reach this. Credentials are write-only and never returned.
  */
 class ServersController extends Controller
 {
-    /** Role allowed to manage monitoring servers. */
-    private const ADMIN_ROLE = 'system-admin';
-
     public function __construct(private readonly MonitoringServerService $service)
     {
         // Before validation, so a non-admin learns nothing about the request shape.
         $this->middleware(function (Request $request, \Closure $next) {
-            if (! UserHelper::hasRole(self::ADMIN_ROLE)) {
-                return response()->json(['error' => ['type' => 'forbidden', 'message' => 'Only system administrators can manage monitoring servers.']], 403);
+            if (! $this->isAdmin()) {
+                return response()->json(['error' => ['type' => 'forbidden', 'message' => 'Only monitoring administrators can manage monitoring servers.']], 403);
             }
 
             return $next($request);
         });
+    }
+
+    /** Any of monitoring.admin_roles (monitoring-admin, system-admin). */
+    private function isAdmin(): bool
+    {
+        foreach (config('monitoring.admin_roles', []) as $role) {
+            if (UserHelper::hasRole($role)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function index(): JsonResponse

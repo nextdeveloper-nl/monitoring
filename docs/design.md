@@ -58,9 +58,23 @@ Server API keys, audit log, members and plugin manifests are outside the current
 The module serves the monitoring HTTP API itself, in the same style as the IAM module: `src/Http/api.routes.php` is registered by the service provider (switch off with `leo.allowed_routes.monitoring = false`) and served under `/monitoring`. Controllers are per resource (`Hosts`, `Checks`, `Alerts`, `Channels`, `Sites`, `Plugins`, `Tenant`, `Servers`) and only validate and delegate to `MonitoringProxyService` and `MonitoringServerService`.
 
 - Customer endpoints act for the logged-in user's current account (the tenant is created on first use) and make the user a tenant member with a role mapped from their account role.
-- `/monitoring/servers` is platform administration for system administrators; credentials are write-only.
+- `/monitoring/servers` is platform administration for `monitoring-admin` and `system-admin`; credentials are write-only.
 - The controllers use `NextDeveloper\IAM\Helpers\UserHelper` for the current user, account and roles, so the module expects the IAM package in the host application.
 - Not in the module: the glue to other modules (account suspension, billing usage emitter) stays in the host application.
 - Route caching: the provider does not register routes when they are cached, so clear the route cache after upgrading the module.
 
 The API reference for UI developers: `docs/monitoring-ui-api.md` (customer), `docs/monitoring-servers-admin-api.md` (admin), `docs/monitoring-webhooks.md` (receiving alerts).
+
+## Roles
+
+Three roles, one class each in `src/Authorization/Roles`, following the S3 and DNS modules:
+
+| Role | Level | Meaning |
+| --- | --- | --- |
+| `monitoring-admin` | 100 | the monitoring service owner: manages monitoring servers, sees every tenant. Never granted to customers |
+| `monitoring-manager` | 150 | operator within the account: configures hosts, checks, sites and channels, acknowledges alerts |
+| `monitoring-user` | 200 | read-only within the account |
+
+Customer data (hosts, checks, alerts) lives on the monitoring service, not in our database, so the table permissions in the roles only cover `monitoring_servers` and `monitoring_tenants`. What a customer may do is decided by `MonitoringProxyService`: users holding any role in `monitoring.operator_roles` become **operator** members of their tenant, everybody else is **read-only**; the monitoring service enforces it. `monitoring.admin_roles` decides who may call `/monitoring/servers`.
+
+`monitoring.operator_roles` still contains `cloud-resource-owner` so nothing changes while `monitoring-manager` is rolled out. The role rows must exist in `iam_roles` (create them with `RolesService::getRole()` or `leo:generate-roles` in the host application) and the host application decides who gets them (`register.default_roles`, `owner_roles`).

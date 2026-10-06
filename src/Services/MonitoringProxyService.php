@@ -621,12 +621,18 @@ class MonitoringProxyService
     }
 
     /**
-     * cloud-resource-owner is operator; everybody else (cloud-spectator, no cloud role) is read-only.
-     * Never admin: that is the monitoring service owner's.
+     * Operator when the user holds any of monitoring.operator_roles (monitoring-manager, monitoring-admin and, for now,
+     * cloud-resource-owner); everybody else is read-only. Never admin: that is the monitoring service owner's.
      */
     private function monitoringRole(): string
     {
-        return UserHelper::hasRole('cloud-resource-owner') ? ManagesMembers::ROLE_OPERATOR : ManagesMembers::ROLE_READ_ONLY;
+        foreach (config('monitoring.operator_roles', []) as $role) {
+            if (UserHelper::hasRole($role)) {
+                return ManagesMembers::ROLE_OPERATOR;
+            }
+        }
+
+        return ManagesMembers::ROLE_READ_ONLY;
     }
 
     private function checksDriver($driver): ManagesChecks
