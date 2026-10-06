@@ -43,9 +43,35 @@ class MonitoringManagerRole extends AbstractRole implements IAuthorizationRole
 
     public function allowedOperations(): array
     {
+            // The app's Authorize middleware maps a two-segment URL to "<module>_<object>:<operation>" and needs it listed here:
+            // GET /monitoring/hosts is monitoring_hosts:read, POST /monitoring/hosts is monitoring_hosts:create, /monitoring/tenant is
+            // monitoring_tenant. URLs with three or more segments (/monitoring/hosts/{id}, .../checks) are not checked by it;
+            // the monitoring service enforces the member role (operator or read-only) on those.
         return [
             // Their own account tenant
             'monitoring_tenants:read',
+
+            // Operator: view, and configure hosts, checks, sites and channels; acknowledge and resolve alerts
+            'monitoring_tenant:read',
+            'monitoring_plugins:read',
+            'monitoring_hosts:read',
+            'monitoring_checks:read',
+            'monitoring_alerts:read',
+            'monitoring_channels:read',
+            'monitoring_sites:read',
+            'monitoring_hosts:create',
+            'monitoring_hosts:update',
+            'monitoring_hosts:delete',
+            'monitoring_checks:create',
+            'monitoring_checks:update',
+            'monitoring_checks:delete',
+            'monitoring_channels:create',
+            'monitoring_channels:update',
+            'monitoring_channels:delete',
+            'monitoring_sites:create',
+            'monitoring_sites:update',
+            'monitoring_sites:delete',
+            'monitoring_alerts:update',
         ];
     }
 
