@@ -222,7 +222,7 @@ class PlusCloudsDriverTest extends TestCase
 
     public function test_push_is_unsupported_and_capabilities_listed(): void
     {
-        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members'] as $capability) {
+        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins'] as $capability) {
             $this->assertTrue($this->driver->supports($capability), $capability);
         }
         $this->assertFalse($this->driver->supports('push'));
@@ -356,6 +356,17 @@ class PlusCloudsDriverTest extends TestCase
         $this->assertStringEndsWith('/v1/tenants/srv-tenant-uuid/members/by-external-id/user-uuid', $this->sent()->url());
         $this->assertSame(['role' => 'operator'], $this->sent()->data());
         $this->assertFalse($this->sent()->hasHeader('X-Tenant-External-ID'));
+    }
+
+    public function test_list_plugins_returns_manifests(): void
+    {
+        $this->fake(['*' => Http::response(['items' => [['type' => 'icmp', 'default_interval_seconds' => 60, 'metrics' => [['name' => 'rtt_avg_ms']]], ['type' => 'http']]])]);
+
+        $plugins = $this->driver->listPlugins(self::TENANT);
+
+        $this->assertSame(['icmp', 'http'], $plugins->pluck('type')->all());
+        $this->assertStringEndsWith('/v1/plugins', $this->sent()->url());
+        $this->assertSame(self::TENANT, $this->sent()->header('X-Tenant-External-ID')[0]);
     }
 
     public function test_problem_response_becomes_api_request_failed_with_body(): void

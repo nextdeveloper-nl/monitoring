@@ -8,6 +8,7 @@ use InvalidArgumentException;
 use DateTimeImmutable;
 use DateTimeZone;
 use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
+use NextDeveloper\Monitoring\Contracts\ListsPlugins;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
 use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ReportsUsage;
@@ -42,12 +43,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins
 {
     /** Set by actingAs(): the user whose role applies to tenant calls. Null = the platform, with full rights in the tenant. */
     protected ?string $actor = null;
 
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins'];
 
     public function driverName(): string
     {
@@ -532,6 +533,12 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         } while ($cursor);
 
         return $items;
+    }
+
+    /** Plugin manifests as the server serves them. Not paginated; the list is short. */
+    public function listPlugins(string $tenantId): Collection
+    {
+        return collect($this->request('GET', $this->path('plugins'), [], [], $this->tenantHeaders($tenantId))['items'] ?? [])->values();
     }
 
     /** Follow cursors for any list endpoint, mapping each item. */
