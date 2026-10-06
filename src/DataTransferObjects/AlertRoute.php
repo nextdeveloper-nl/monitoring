@@ -20,6 +20,14 @@ final class AlertRoute
         public readonly ?string $externalId = null,
         public readonly ?string $externalType = null,
         public readonly array $raw = [],
+        /** Fields incidents are grouped by (root_device_id, device_id, site_id, severity, check_id, plugin, device_type). Empty: no grouping. */
+        public readonly array $groupBy = [],
+        /** Seconds to collect a group before sending it (0 to 600). */
+        public readonly ?int $groupWaitSeconds = null,
+        /** Resend open, unacknowledged incidents every this many seconds (300 to 604800); null: never. */
+        public readonly ?int $repeatIntervalSeconds = null,
+        /** Escalation steps: [{after_seconds, labels?, only_if_unacknowledged?, schedule?}]. */
+        public readonly array $steps = [],
     ) {
     }
 
@@ -35,6 +43,10 @@ final class AlertRoute
             'continue' => $this->continue,
             'labels' => $this->labels,
             'external_id' => $this->externalId,
+            'group_by' => $this->groupBy,
+            'group_wait_seconds' => $this->groupWaitSeconds,
+            'repeat_interval_seconds' => $this->repeatIntervalSeconds,
+            'steps' => $this->steps,
         ];
     }
 }

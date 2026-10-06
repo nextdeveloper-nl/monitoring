@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Http;
 use InvalidArgumentException;
 use NextDeveloper\Monitoring\DataTransferObjects\AlertRoute;
 use NextDeveloper\Monitoring\DataTransferObjects\Check;
+use NextDeveloper\Monitoring\DataTransferObjects\Credential;
 use NextDeveloper\Monitoring\DataTransferObjects\Host;
 use NextDeveloper\Monitoring\DataTransferObjects\Site;
 use NextDeveloper\Monitoring\DataTransferObjects\Webhook;
@@ -222,7 +223,7 @@ class PlusCloudsDriverTest extends TestCase
 
     public function test_push_is_unsupported_and_capabilities_listed(): void
     {
-        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore'] as $capability) {
+        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors'] as $capability) {
             $this->assertTrue($this->driver->supports($capability), $capability);
         }
         $this->assertFalse($this->driver->supports('push'));
@@ -393,6 +394,82 @@ class PlusCloudsDriverTest extends TestCase
         $this->assertSame('POST', $this->sent()->method());
         $this->assertStringEndsWith('/v1/tenants/by-external-id/'.self::TENANT.'/restore', $this->sent()->url());
         $this->assertSame(TenantStatus::Active, $tenant->status);
+    }
+
+    public function test_credentials_are_sent_as_fields_and_never_read_back_with_secrets(): void
+    {
+        $this->fake(['*' => Http::response(['id' => 'cr1', 'name' => 'snmp', 'type' => 'snmp_v2c', 'fields' => [], 'secrets_set' => ['community']], 201)]);
+
+        $credential = $this->driver->createCredential(self::TENANT, new Credential(null, 'snmp', 'snmp_v2c', ['community' => 'public']));
+
+        $this->assertSame('POST', $this->sent()->method());
+        $this->assertStringEndsWith('/v1/credentials', $this->sent()->url());
+        $this->assertSame('{"name":"snmp","type":"snmp_v2c","fields":{"community":"public"}}', json_encode($this->sent()->data()));
+        $this->assertSame(['community'], $credential->secretsSet);
+        $this->assertStringNotContainsString('public', json_encode($credential->toArray()));
+
+        $this->fake(['*' => Http::response(['id' => 'cr1', 'name' => 'snmp', 'type' => 'snmp_v2c', 'fields' => [], 'secrets_set' => ['community']])]);
+        $this->driver->updateCredential(self::TENANT, 'cr1', new Credential('cr1', 'renamed', 'snmp_v2c', []));
+        $this->assertSame('PUT', $this->sent()->method());
+        $this->assertStringEndsWith('/v1/credentials/cr1', $this->sent()->url());
+        // an empty field map is sent as an object, not as []
+        $this->assertSame('{}', json_encode($this->sent()->data()['fields']));
+    }
+
+    public function test_check_objects_and_test_results_carry_collector_objects(): void
+    {
+        $this->fake(['*' => Http::response(['items' => [['key' => 'Gi1/0/2', 'name' => 'Gi1/0/2', 'status' => 'CRITICAL', 'gone_at' => null]]])]);
+
+        $objects = $this->driver->listCheckObjects(self::TENANT, 'c1', 'CRITICAL', false);
+
+        $this->assertSame('Gi1/0/2', $objects->first()['key']);
+        $this->assertStringContainsString('/v1/checks/c1/objects', $this->sent()->url());
+        $this->assertStringContainsString('status=CRITICAL', $this->sent()->url());
+        $this->assertStringContainsString('include_gone=false', $this->sent()->url());
+
+        $this->fake(['*' => Http::response([['check_id' => 'c1', 'name' => 'if', 'plugin' => 'snmp.interfaces', 'status' => 'OK', 'metrics' => [], 'objects' => [['key' => 'Gi1/0/1', 'status' => 'OK']]]])]);
+        $result = $this->driver->testHost(self::TENANT, 'd1')->first();
+        $this->assertSame('Gi1/0/1', $result->objects[0]['key']);
+        $this->assertSame('Gi1/0/1', $result->toArray()['objects'][0]['key']);
+    }
+
+    public function test_alert_filters_send_false_as_a_value_and_route_options_round_trip(): void
+    {
+        $this->fake(['*' => Http::response(['items' => [], 'next_cursor' => null])]);
+        $this->driver->listAlerts(self::TENANT, ['suppressed' => false, 'object_key' => 'Gi1/0/1', 'status' => null]);
+        $url = $this->sent()->url();
+        $this->assertStringContainsString('suppressed=false', $url);
+        $this->assertStringContainsString('object_key=Gi1', $url);
+        $this->assertStringNotContainsString('status=', $url);
+
+        $this->fake(['*' => Http::response(['id' => 'r1', 'name' => 'n', 'endpoint_id' => 'w1', 'group_by' => ['device_id'], 'group_wait_seconds' => 30, 'repeat_interval_seconds' => 600, 'steps' => [['after_seconds' => 0]]])]);
+        $route = $this->driver->upsertAlertRoute(self::TENANT, new AlertRoute(null, 'n', 'w1', externalId: 'e1', groupBy: ['device_id'], groupWaitSeconds: 30, repeatIntervalSeconds: 600, steps: [['after_seconds' => 0]]));
+
+        $body = $this->sent()->data();
+        $this->assertSame(['device_id'], $body['group_by']);
+        $this->assertSame(30, $body['group_wait_seconds']);
+        $this->assertSame(600, $body['repeat_interval_seconds']);
+        $this->assertSame(['device_id'], $route->groupBy);
+        $this->assertSame(600, $route->repeatIntervalSeconds);
+        $this->assertSame(1, count($route->steps));
+    }
+
+    public function test_route_preview_and_bulk_replay(): void
+    {
+        $this->fake(['*' => Http::response(['routes' => [['id' => 'r1', 'name' => 'n', 'endpoint_id' => 'w1', 'matched' => true, 'notifies' => true]]])]);
+        $routes = $this->driver->previewAlertRoutes(self::TENANT, ['severity' => 'critical', 'device_id' => 'd1']);
+        $this->assertTrue($routes->first()['notifies']);
+        $this->assertStringEndsWith('/v1/alert-routes/test', $this->sent()->url());
+        $this->assertSame('critical', $this->sent()->data()['severity']);
+
+        $this->fake(['*' => Http::response(null, 202)]);
+        $this->driver->replayWebhookDeliveries(self::TENANT, 'w1', new \DateTimeImmutable('2026-10-06T10:00:00+03:00'), new \DateTimeImmutable('2026-10-06T12:00:00Z'));
+        $this->assertSame('POST', $this->sent()->method());
+        $url = urldecode($this->sent()->url());
+        $this->assertStringContainsString('/v1/webhooks/w1/deliveries/replay?', $url);
+        $this->assertStringContainsString('from=2026-10-06T07:00:00Z', $url);
+        $this->assertStringContainsString('to=2026-10-06T12:00:00Z', $url);
+        $this->assertStringContainsString('status=failed', $url);
     }
 
     public function test_problem_response_becomes_api_request_failed_with_body(): void

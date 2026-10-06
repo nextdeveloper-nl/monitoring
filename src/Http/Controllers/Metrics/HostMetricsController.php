@@ -30,6 +30,7 @@ class HostMetricsController extends AbstractMonitoringController
             'name' => 'sometimes|array|max:20',
             'name.*' => 'string|max:100',
             'check_id' => 'sometimes|string',
+            'object' => 'sometimes|string|max:500',
         ]);
 
         return $this->respond(fn () => ['data' => $this->service->metricSeries($hostId, $params)]);

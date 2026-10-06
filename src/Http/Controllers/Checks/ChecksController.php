@@ -10,14 +10,14 @@ class ChecksController extends AbstractMonitoringController
 {
     public function index(Request $request): JsonResponse
     {
-        $filters = $request->validate(['plugin' => 'sometimes|string', 'enabled' => 'sometimes|boolean']);
+        $filters = $this->booleans($request->validate(['plugin' => 'sometimes|string', 'enabled' => 'sometimes|in:true,false,1,0']), ['enabled']);
 
         return $this->respond(fn () => ['data' => $this->service->listChecks($request->query('host_id'), $filters)]);
     }
 
     public function forHost(Request $request, string $hostId): JsonResponse
     {
-        $filters = $request->validate(['plugin' => 'sometimes|string', 'enabled' => 'sometimes|boolean']);
+        $filters = $this->booleans($request->validate(['plugin' => 'sometimes|string', 'enabled' => 'sometimes|in:true,false,1,0']), ['enabled']);
 
         return $this->respond(fn () => ['data' => $this->service->listChecks($hostId, $filters)]);
     }
@@ -42,6 +42,9 @@ class ChecksController extends AbstractMonitoringController
             'is_host_check' => 'sometimes|boolean',
             'unknown_is_critical' => 'sometimes|boolean',
             'runbook_url' => 'sometimes|url|max:2000',
+            // role => credential id, for example {"auth": "<credential id>"}; see GET /monitoring/credentials
+            'credentials' => 'sometimes|array|max:10',
+            'credentials.*' => 'string|max:100',
         ]);
 
         return $this->respond(fn () => ['data' => $this->service->createCheck($hostId, $data)], 201);
@@ -61,6 +64,8 @@ class ChecksController extends AbstractMonitoringController
             'is_host_check' => 'sometimes|boolean',
             'unknown_is_critical' => 'sometimes|boolean',
             'runbook_url' => 'sometimes|nullable|url|max:2000',
+            'credentials' => 'sometimes|array|max:10',
+            'credentials.*' => 'nullable|string|max:100',
         ]);
 
         return $this->respond(fn () => ['data' => $this->service->updateCheck($checkId, $data)]);
@@ -73,6 +78,17 @@ class ChecksController extends AbstractMonitoringController
 
             return [];
         }, 204);
+    }
+
+    /** The objects a collector check reports (interfaces, outlets, ...), each with its own state. Empty for a plain check. */
+    public function objects(Request $request, string $checkId): JsonResponse
+    {
+        $filters = $this->booleans($request->validate([
+            'status' => 'sometimes|string|in:OK,WARNING,CRITICAL,UNKNOWN',
+            'include_gone' => 'sometimes|in:true,false,1,0',
+        ]), ['include_gone']);
+
+        return $this->respond(fn () => ['data' => $this->service->checkObjects($checkId, $filters['status'] ?? null, $filters['include_gone'] ?? true)]);
     }
 
     public function state(string $checkId): JsonResponse

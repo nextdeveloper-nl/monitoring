@@ -72,6 +72,13 @@ class MonitoringManagerRole extends AbstractRole implements IAuthorizationRole
             'monitoring_sites:update',
             'monitoring_sites:delete',
             'monitoring_alerts:update',
+
+            // Credentials checks log in with (SNMP, HTTP auth, ...). Secrets are write-only.
+            'monitoring_credential_types:read',
+            'monitoring_credentials:read',
+            'monitoring_credentials:create',
+            'monitoring_credentials:update',
+            'monitoring_credentials:delete',
         ];
     }
 

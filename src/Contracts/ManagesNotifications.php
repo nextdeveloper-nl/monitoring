@@ -2,6 +2,7 @@
 
 namespace NextDeveloper\Monitoring\Contracts;
 
+use DateTimeInterface;
 use Illuminate\Support\Collection;
 use NextDeveloper\Monitoring\DataTransferObjects\AlertRoute;
 use NextDeveloper\Monitoring\DataTransferObjects\Webhook;
@@ -32,6 +33,16 @@ interface ManagesNotifications
 
     /** Re-queue one delivery with a fresh retry window. */
     public function replayWebhookDelivery(string $tenantId, string $webhookId, string $deliveryId): void;
+
+    /** Send an endpoint's failed (or cancelled) deliveries again, in bulk, within a time range. Returns nothing; the server queues them. */
+    public function replayWebhookDeliveries(string $tenantId, string $webhookId, DateTimeInterface $from, DateTimeInterface $to, string $status = 'failed'): void;
+
+    /**
+     * Which routes a sample incident would reach. @param array{event_type?: string, severity?: string, device_id?: string, check_id?: string} $sample
+     *
+     * @return Collection<int, array> id, name, endpoint_id, matched, notifies, in route order
+     */
+    public function previewAlertRoutes(string $tenantId, array $sample): Collection;
 
     /** @return Collection<int, AlertRoute> */
     public function listAlertRoutes(string $tenantId): Collection;

@@ -15,6 +15,21 @@ trait HandlesMonitoringResponses
      * Run a service call and map monitoring failures to JSON errors. Upstream status codes the client can act
      * on (404/409/422/403) pass through with the problem type and detail; anything else becomes 502.
      */
+    /**
+     * Boolean filters arrive as query strings: "true", "false", "1" or "0". Laravel's `boolean` rule rejects "true",
+     * so filters use `in:true,false,1,0` and are converted here (a key that is absent stays absent).
+     */
+    protected function booleans(array $validated, array $keys): array
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $validated)) {
+                $validated[$key] = filter_var($validated[$key], FILTER_VALIDATE_BOOLEAN);
+            }
+        }
+
+        return $validated;
+    }
+
     protected function respond(callable $call, int $status = 200): JsonResponse
     {
         try {

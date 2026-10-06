@@ -30,14 +30,17 @@ A `POST` with a CloudEvents 1.0 JSON body:
 
 | Field | Meaning |
 | --- | --- |
-| `type` | `monitoring.incident.opened`, `.updated`, `.acknowledged`, `.resolved`, or `monitoring.webhook.test` |
-| `subject` | the incident id |
+| `type` | `monitoring.incident.opened`, `.updated`, `.acknowledged`, `.resolved`, `.commented`, `.renotify` (a reminder for an open, unacknowledged incident), `.escalated` (an escalation step fired), or `monitoring.webhook.test` |
+| `subject` | the incident id (or `group:<id>` for a grouped event) |
 | `data.account_id` | your account id |
-| `data.object` | the incident |
+| `data.object` | the incident. It includes `object_key` and `object_name` (the port or outlet, for collector checks; `null` otherwise), `suppressed`, `root_incident_id` and `root_device_id`. After a suppression ended it carries `unsuppressed: true` |
 | `data.device` | the host: id, name, address, type, tags, and its containment path |
-| `data.check` | the check: id, name, plugin, last output, runbook URL |
+| `data.check` | the check: id, name, plugin, last output, runbook URL, and `thresholds` |
+| `data.route` | the channel's route: id, name, `step` (the escalation step) and `labels` |
+| `data.links.incident` | a link to the incident, when the service is configured with one |
+| `data.actor` | who acknowledged, resolved or commented (`kind`, `user_id`, `external_id`); `null` for the system |
 
-During an outage, related incidents can arrive together as one event whose `data.objects` lists them, with `data.group` giving the group id and size. In that case `data.object`, `data.device` and `data.check` are null. Incidents that are explained by a failing upstream host are held back and are only delivered if they are still failing once the upstream host recovers.
+Every incident arrives as its own event unless the channel sets `group_by` (see "Grouping, suppression and reminders" below), in which case related incidents can arrive together as one event.
 
 ## Verify the signature
 
@@ -68,3 +71,11 @@ foreach (explode(' ', $signatureHeader) as $candidate) {
 - Events for one incident arrive in order.
 - **Answering 410 Gone disables the channel** and cancels its pending deliveries. The channel then shows `enabled: false` and a `disabled_reason`. Never answer 410 for a temporary problem. To turn it back on, `PATCH` the channel with `{"enabled": true}`.
 - Rotating the secret keeps the old one valid for 24 hours, and deliveries carry both signatures in that time.
+
+## Grouping, suppression and reminders
+
+- **Grouping:** a channel with `group_by` receives one event for several incidents that share those fields (for example one message for a whole switch outage). That event has the same `type`, the subject `group:<id>`, `data.group` (`id`, `key`, `count`) and `data.objects` (a list of `{object, device, check}`), and `data.object`, `data.device` and `data.check` are `null`. A group of one arrives as a plain event. Handle both shapes if you use `group_by`; a channel without it only ever gets plain events.
+- **Suppression:** an incident explained by an upstream host failure (the switch is down, so the servers behind it are too) is held back and not delivered. When the upstream incident resolves and the problem is still there, it is delivered as a normal `monitoring.incident.opened` with `data.object.unsuppressed: true`.
+- **Reminders:** a channel with `repeat_interval_seconds` receives `monitoring.incident.renotify` for incidents that are still open and unacknowledged.
+- **Escalation:** a channel with `steps` receives `monitoring.incident.escalated` when a later step fires, with `data.route.step` and the step's labels merged into `data.route.labels`.
+- **Collectors:** each object of a collector check has its own incident; `data.object.object_key` names it. If the device stops reporting an object, its incident resolves with `resolved_by: "object-gone"`.

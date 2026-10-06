@@ -8,5 +8,5 @@ use Illuminate\Support\Collection;
 interface ListsMetricSeries
 {
     /** @return Collection<int, array> series descriptors: id, plugin, object, name, unit, kind, retention_class */
-    public function listMetricSeries(string $tenantId, ?string $hostId = null, ?string $checkId = null, array $keys = []): Collection;
+    public function listMetricSeries(string $tenantId, ?string $hostId = null, ?string $checkId = null, array $keys = [], ?string $object = null): Collection;
 }

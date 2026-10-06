@@ -9,8 +9,10 @@ use Illuminate\Support\Str;
 use NextDeveloper\IAM\Helpers\UserHelper;
 use Carbon\Carbon;
 use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
+use NextDeveloper\Monitoring\Contracts\ListsCheckObjects;
 use NextDeveloper\Monitoring\Contracts\ListsPlugins;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
+use NextDeveloper\Monitoring\Contracts\ManagesCredentials;
 use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
 use NextDeveloper\Monitoring\Contracts\GuardsTenantRestore;
@@ -22,6 +24,7 @@ use NextDeveloper\Monitoring\DataTransferObjects\Webhook;
 use NextDeveloper\Monitoring\DataTransferObjects\Check;
 use NextDeveloper\Monitoring\DataTransferObjects\CheckResult;
 use NextDeveloper\Monitoring\DataTransferObjects\CheckState;
+use NextDeveloper\Monitoring\DataTransferObjects\Credential;
 use NextDeveloper\Monitoring\DataTransferObjects\Host;
 use NextDeveloper\Monitoring\DataTransferObjects\MetricSeries;
 use NextDeveloper\Monitoring\DataTransferObjects\Site;
@@ -71,7 +74,7 @@ class MonitoringProxyService
             'name' => $tenant->name,
             'status' => $tenant->status instanceof \BackedEnum ? $tenant->status->value : $tenant->status,
             'capabilities' => array_values(array_filter(
-                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins'],
+                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors'],
                 fn ($c) => $this->manager->forTenant($tenant)->supports($c),
             )),
         ];
@@ -168,7 +171,7 @@ class MonitoringProxyService
             $data['enabled'] ?? true,
             $data['thresholds'] ?? [],
             $data['is_host_check'] ?? false,
-            array_intersect_key($data, array_flip(['timeout_seconds', 'failure_count', 'recovery_count', 'unknown_is_critical', 'runbook_url'])),
+            array_intersect_key($data, array_flip(['timeout_seconds', 'failure_count', 'recovery_count', 'unknown_is_critical', 'runbook_url', 'credentials'])),
         );
 
         return $this->check($this->checksDriver($driver)->createCheck($id, $check));
@@ -334,7 +337,7 @@ class MonitoringProxyService
             throw UnsupportedOperation::for($driver->driverName(), 'metric series');
         }
 
-        return $driver->listMetricSeries($id, $hostId, $params['check_id'] ?? null, $params['name'] ?? [])
+        return $driver->listMetricSeries($id, $hostId, $params['check_id'] ?? null, $params['name'] ?? [], $params['object'] ?? null)
             ->map(fn (array $s) => [
                 'name' => $s['name'] ?? null,
                 'unit' => $s['unit'] ?? null,
@@ -356,6 +359,100 @@ class MonitoringProxyService
             $seconds <= 30 * 86400 => 3600,
             default => 86400,
         };
+    }
+
+    // ---- credentials (what checks log in with: SNMP, HTTP auth, ...) ----
+
+    /** The credential kinds and their fields. Secret fields are marked writeOnly in fields_schema. */
+    public function credentialTypes(): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->credentialsDriver($driver)->listCredentialTypes($id)->map(fn (array $t) => [
+            'name' => $t['name'] ?? null,
+            'description' => $t['description'] ?? null,
+            'fields_schema' => $t['fields_schema'] ?? null,
+        ])->values()->all();
+    }
+
+    public function listCredentials(): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->credentialsDriver($driver)->listCredentials($id)->map(fn (Credential $c) => $this->credential($c))->values()->all();
+    }
+
+    /** $data: name, type, fields {username, password, community, ...}. The secrets are write-only: never returned. */
+    public function createCredential(array $data): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->credential($this->credentialsDriver($driver)->createCredential($id, new Credential(null, $data['name'], $data['type'], $data['fields'] ?? [])));
+    }
+
+    /**
+     * Partial update. Non-secret fields not sent keep their value (the server replaces on PUT, so the current ones are
+     * sent along); a secret not sent keeps its stored value on the server. Send a secret only to change it.
+     */
+    public function updateCredential(string $credentialId, array $data): array
+    {
+        [$driver, $id] = $this->context();
+        $credentials = $this->credentialsDriver($driver);
+
+        $current = $credentials->getCredential($id, $credentialId);
+        $fields = array_merge($current->fields, $data['fields'] ?? []);
+
+        return $this->credential($credentials->updateCredential($id, $credentialId, new Credential(
+            $credentialId, $data['name'] ?? $current->name, $data['type'] ?? $current->type, $fields,
+        )));
+    }
+
+    /** Refused with 409 in-use while a check uses it. */
+    public function deleteCredential(string $credentialId): void
+    {
+        [$driver, $id] = $this->context();
+
+        $this->credentialsDriver($driver)->deleteCredential($id, $credentialId);
+    }
+
+    private function credentialsDriver($driver): ManagesCredentials
+    {
+        return $driver instanceof ManagesCredentials ? $driver : throw UnsupportedOperation::for($driver->driverName(), 'credentials');
+    }
+
+    private function credential(Credential $c): array
+    {
+        return ['id' => $c->id, 'name' => $c->name, 'type' => $c->type, 'fields' => (object) $c->fields, 'secrets_set' => $c->secretsSet];
+    }
+
+    // ---- collector objects (interfaces of a switch, outlets of a PDU, ...) ----
+
+    /**
+     * The objects a collector check reports, each with its own state and incident. Empty for a plain check.
+     * Objects the device stopped reporting are kept for 30 days (gone_at is set).
+     */
+    public function checkObjects(string $checkId, ?string $status = null, bool $includeGone = true): array
+    {
+        [$driver, $id] = $this->context();
+
+        if (! $driver instanceof ListsCheckObjects) {
+            throw UnsupportedOperation::for($driver->driverName(), 'check objects');
+        }
+
+        return $driver->listCheckObjects($id, $checkId, $status, $includeGone)->map(fn (array $o) => [
+            'key' => $o['key'] ?? null,
+            'name' => $o['name'] ?? null,
+            'labels' => (object) ($o['labels'] ?? []),
+            'phase' => $o['phase'] ?? null,
+            'status' => $o['status'] ?? null,
+            'since' => $o['since'] ?? null,
+            'last_output' => $o['last_output'] ?? null,
+            'last_metrics' => (object) ($o['last_metrics'] ?? []),
+            'incident_id' => $o['incident_id'] ?? null,
+            'first_seen_at' => $o['first_seen_at'] ?? null,
+            'last_seen_at' => $o['last_seen_at'] ?? null,
+            'gone_at' => $o['gone_at'] ?? null,
+        ])->values()->all();
     }
 
     // ---- notification channels (webhook + alert route) ----
@@ -402,6 +499,8 @@ class MonitoringProxyService
             $route = $notifications->upsertAlertRoute($id, new AlertRoute(
                 null, $data['name'], $webhook->id, match: $this->routeMatch($data),
                 enabled: $data['enabled'] ?? true, externalId: $externalId, externalType: self::CHANNEL_ROUTE_TYPE,
+                groupBy: $data['group_by'] ?? [], groupWaitSeconds: $data['group_wait_seconds'] ?? null,
+                repeatIntervalSeconds: $data['repeat_interval_seconds'] ?? null, steps: $data['steps'] ?? [],
             ));
         } catch (\Throwable $e) {
             $notifications->deleteWebhook($id, $webhook->id);
@@ -433,7 +532,7 @@ class MonitoringProxyService
         ));
 
         $match = $route?->match ?? [];
-        foreach (['severity', 'device_types', 'tags'] as $key) {
+        foreach (['severity', 'device_types', 'tags', 'site_ids', 'check_ids', 'event_types'] as $key) {
             if (array_key_exists($key, $data)) {
                 $match = $this->routeMatch([$key => $data[$key]]) + $match;
             }
@@ -443,6 +542,11 @@ class MonitoringProxyService
             $route?->id, $data['name'] ?? $current->name, $webhook->id, $route?->position, $enabled,
             array_filter($match, fn ($v) => $v !== [] && $v !== null),
             externalId: $route?->externalId ?? $current->externalId, externalType: self::CHANNEL_ROUTE_TYPE,
+            // Route options keep their current value unless the request names them (null clears repeat_interval_seconds).
+            groupBy: array_key_exists('group_by', $data) ? $data['group_by'] : ($route?->groupBy ?? []),
+            groupWaitSeconds: array_key_exists('group_wait_seconds', $data) ? $data['group_wait_seconds'] : $route?->groupWaitSeconds,
+            repeatIntervalSeconds: array_key_exists('repeat_interval_seconds', $data) ? $data['repeat_interval_seconds'] : $route?->repeatIntervalSeconds,
+            steps: array_key_exists('steps', $data) ? $data['steps'] : ($route?->steps ?? []),
         ));
 
         return $this->channel($webhook, $route);
@@ -521,6 +625,46 @@ class MonitoringProxyService
     }
 
     /**
+     * Which of the account's channels a sample incident would notify (event_type, severity, host_id or check_id).
+     * Routes come back in evaluation order with matched (the filters fit) and notifies (it would actually send).
+     */
+    public function previewChannels(array $sample): array
+    {
+        [$driver, $id] = $this->context();
+        $notifications = $this->notificationsDriver($driver);
+
+        $body = array_filter([
+            'event_type' => $sample['event_type'] ?? null,
+            'severity' => $sample['severity'] ?? null,
+            'device_id' => $sample['host_id'] ?? null,
+            'check_id' => $sample['check_id'] ?? null,
+        ], fn ($v) => $v !== null);
+
+        $channels = $notifications->listWebhooks($id)->filter(fn (Webhook $w) => $w->externalType === self::CHANNEL_TYPE)->keyBy('id');
+        $routes = $notifications->listAlertRoutes($id)->keyBy('id');
+
+        return $notifications->previewAlertRoutes($id, $body)
+            ->map(function (array $r) use ($channels, $routes) {
+                $channel = $channels->get($routes->get($r['id'] ?? '')?->webhookId ?? $r['endpoint_id'] ?? '');
+
+                return ['channel_id' => $channel?->id, 'name' => $r['name'] ?? null, 'matched' => (bool) ($r['matched'] ?? false), 'notifies' => (bool) ($r['notifies'] ?? false)];
+            })
+            ->filter(fn (array $r) => $r['channel_id'] !== null)
+            ->values()->all();
+    }
+
+    /** Send a channel's failed (or cancelled) deliveries again, in bulk, for a time range. */
+    public function replayChannelDeliveries(string $channelId, string $from, string $to, string $status = 'failed'): void
+    {
+        [$driver, $id] = $this->context();
+        $notifications = $this->notificationsDriver($driver);
+
+        $webhook = $this->findChannelWebhook($notifications, $id, $channelId);
+
+        $notifications->replayWebhookDeliveries($id, $webhook->id, Carbon::parse($from), Carbon::parse($to), $status);
+    }
+
+    /**
      * Early, best-effort check so the customer gets an error now instead of a failed delivery later.
      * The monitoring service blocks internal targets itself at connect time (after DNS), and that stays the real defence.
      */
@@ -549,6 +693,9 @@ class MonitoringProxyService
             'severity' => $data['severity'] ?? null,
             'device_types' => $data['device_types'] ?? null,
             'tags' => $data['tags'] ?? null,
+            'site_ids' => $data['site_ids'] ?? null,
+            'check_ids' => $data['check_ids'] ?? null,
+            'event_types' => $data['event_types'] ?? null,
         ], fn ($v) => $v !== null && $v !== []);
     }
 
@@ -578,6 +725,16 @@ class MonitoringProxyService
             'severity' => $route?->match['severity'] ?? [],
             'device_types' => $route?->match['device_types'] ?? [],
             'tags' => $route?->match['tags'] ?? [],
+            'site_ids' => $route?->match['site_ids'] ?? [],
+            'check_ids' => $route?->match['check_ids'] ?? [],
+            'event_types' => $route?->match['event_types'] ?? [],
+            // grouping: incidents sharing these fields arrive as one event after group_wait_seconds
+            'group_by' => $route?->groupBy ?? [],
+            'group_wait_seconds' => $route?->groupWaitSeconds,
+            // resend open, unacknowledged incidents this often (seconds); null: never
+            'repeat_interval_seconds' => $route?->repeatIntervalSeconds,
+            // escalation steps: [{after_seconds, labels, only_if_unacknowledged, schedule}]
+            'steps' => $route?->steps ?? [],
             'previous_secret_valid_until' => $w->raw['previous_valid_until'] ?? null,
         ];
     }
@@ -767,6 +924,9 @@ class MonitoringProxyService
             'failure_count' => $c->raw['failure_count'] ?? null,
             'recovery_count' => $c->raw['recovery_count'] ?? null,
             'runbook_url' => $c->raw['runbook_url'] ?? null,
+            'unknown_is_critical' => $c->raw['unknown_is_critical'] ?? false,
+            // role => credential id, e.g. {"auth": "..."}; the secrets themselves are never returned
+            'credentials' => (object) ($c->raw['credentials'] ?? []),
         ];
     }
 
@@ -784,6 +944,14 @@ class MonitoringProxyService
             'acknowledged_at' => $a->raw['acknowledged_at'] ?? null,
             'resolved_at' => $a->raw['resolved_at'] ?? null,
             'resolved_by' => $a->raw['resolved_by'] ?? null,
+            // collectors: the object (interface, outlet) this alert is about; null for a plain check
+            'object_key' => $a->raw['object_key'] ?? null,
+            'object_name' => $a->raw['object_name'] ?? null,
+            // held back because an upstream host check explains it; not delivered while that root incident is open
+            'suppressed' => (bool) ($a->raw['suppressed'] ?? false),
+            'root_incident_id' => $a->raw['root_incident_id'] ?? null,
+            'root_host_id' => $a->raw['root_device_id'] ?? null,
+            'flapping' => (bool) ($a->raw['flapping'] ?? false),
         ];
     }
 

@@ -11,6 +11,17 @@ Route::prefix('monitoring')->group(
         Route::get('tenant', 'Tenant\TenantController@show');
         Route::get('plugins', 'Plugins\PluginsController@index');
 
+        Route::get('credential-types', 'Credentials\CredentialsController@types');
+        Route::prefix('credentials')->group(
+            function () {
+                Route::get('/', 'Credentials\CredentialsController@index');
+                Route::post('/', 'Credentials\CredentialsController@store');
+
+                Route::patch('{credential_id}', 'Credentials\CredentialsController@update');
+                Route::delete('{credential_id}', 'Credentials\CredentialsController@destroy');
+            }
+        );
+
         Route::prefix('hosts')->group(
             function () {
                 Route::get('/', 'Hosts\HostsController@index');
@@ -37,6 +48,7 @@ Route::prefix('monitoring')->group(
                 Route::patch('{check_id}', 'Checks\ChecksController@update');
                 Route::delete('{check_id}', 'Checks\ChecksController@destroy');
                 Route::get('{check_id}/state', 'Checks\ChecksController@state');
+                Route::get('{check_id}/objects', 'Checks\ChecksController@objects');
                 Route::post('{check_id}/run', 'Checks\ChecksController@run');
             }
         );
@@ -55,11 +67,14 @@ Route::prefix('monitoring')->group(
                 Route::get('/', 'Channels\ChannelsController@index');
                 Route::post('/', 'Channels\ChannelsController@store');
 
+                Route::post('preview', 'Channels\ChannelsController@preview');
+
                 Route::patch('{channel_id}', 'Channels\ChannelsController@update');
                 Route::delete('{channel_id}', 'Channels\ChannelsController@destroy');
                 Route::post('{channel_id}/test', 'Channels\ChannelsController@test');
                 Route::post('{channel_id}/rotate-secret', 'Channels\ChannelsController@rotateSecret');
                 Route::get('{channel_id}/deliveries', 'Channels\ChannelsController@deliveries');
+                Route::post('{channel_id}/deliveries/replay', 'Channels\ChannelsController@replayAll');
                 Route::post('{channel_id}/deliveries/{delivery_id}/replay', 'Channels\ChannelsController@replay');
             }
         );

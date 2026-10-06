@@ -182,7 +182,7 @@ Check object (from `GET /hosts/{host_id}/checks`, `GET /checks`, `GET /checks/{c
 }
 ```
 
-Filters on `GET /checks`: `host_id`, `plugin`, `enabled` (`true|false`). On `GET /hosts/{host_id}/checks`: `plugin`, `enabled`.
+Filters on `GET /checks`: `host_id`, `plugin`, `enabled` (`true`, `false`, `1` or `0`). On `GET /hosts/{host_id}/checks`: `plugin`, `enabled`.
 
 `POST /hosts/{host_id}/checks` creates one. Returns `201`.
 
@@ -200,6 +200,7 @@ Filters on `GET /checks`: `host_id`, `plugin`, `enabled` (`true|false`). On `GET
 | `is_host_check` | boolean: this check decides up or down. Offer it as "Use this check to decide if the host is up". Use it on exactly one check per host |
 | `unknown_is_critical` | boolean, treat an inconclusive result as critical |
 | `runbook_url` | URL shown to whoever handles the alert |
+| `credentials` | map of role to credential id, for example `{"auth": "<credential id>"}` (see 3.11). Needed by plugins that list `credential_types` |
 
 `PATCH /checks/{check_id}`: partial update with the same fields except `plugin`, which cannot change (`409 plugin-change`). `enabled: false` pauses a check: it stops within seconds, its open alert resolves, and its history stays. Re-enable with `enabled: true`.
 
@@ -233,11 +234,11 @@ Filters on `GET /checks`: `host_id`, `plugin`, `enabled` (`true|false`). On `GET
  "for": "5m"}
 ```
 
-`metric` must be one of the plugin's metrics (`metrics[].name` from `GET /plugins`). `op` is one of `>`, `>=`, `<`, `<=`, `==`, `!=`, `between`, `outside` (the last two also need `value_max`). `for` is how long the condition must hold (for example `5m`). A rule may have `warning`, `critical` or both. Arrays are replaced whole on PATCH, so always send the full list.
+`metric` must be one of the plugin's metrics (`metrics[].name` from `GET /plugins`). On a collector, add `"object": "Gi1/0/1"` (an object's key or name) to target one object; without it the rule applies to every object. Do not send `object` on a plain check (422). `op` is one of `>`, `>=`, `<`, `<=`, `==`, `!=`, `between`, `outside` (the last two also need `value_max`). `for` is how long the condition must hold (for example `5m`). A rule may have `warning`, `critical` or both. Arrays are replaced whole on PATCH, so always send the full list.
 
 ### 3.6 Alerts
 
-`GET /alerts` with filters `status` (`open|acknowledged|resolved|active`; `active` means open plus acknowledged), `severity` (`warning|critical`), `host_id`, `check_id`. Newest first. The result can be long, so always pass a filter, and use `status=active` for dashboards.
+`GET /alerts` with filters `object_key` (one collector object), `suppressed` (`true` or `false`) and `status` (`open|acknowledged|resolved|active`; `active` means open plus acknowledged), `severity` (`warning|critical`), `host_id`, `check_id`. Newest first. The result can be long, so always pass a filter, and use `status=active` for dashboards.
 
 ```json
 {
@@ -257,7 +258,10 @@ Filters on `GET /checks`: `host_id`, `plugin`, `enabled` (`true|false`). On `GET
 
 - `severity`: `warning` amber, `critical` red.
 - `status`: `open` needs attention, `acknowledged` someone is on it, `resolved` is closed.
-- `resolved_by`: `recovery` (fixed itself), `manual`, `check-deleted`, `check-disabled`.
+- `resolved_by`: `recovery` (fixed itself), `manual`, `check-deleted`, `check-disabled`, `object-gone` (the device stopped reporting that object, for example a port that was removed).
+- `object_key` and `object_name` are set for alerts of a **collector** check (3.12): the object the alert is about, for example `Gi1/0/2`. They are `null` for a plain check. Show them next to the host name ("sw-core: Gi1/0/2 down").
+- `suppressed` is `true` when an upstream host check explains this alert (the switch is down, so the servers behind it are too). Suppressed alerts are not sent to channels while their root alert is open. Show them greyed out, "caused by <root>", using `root_incident_id` and `root_host_id`. Hide them by default with `?suppressed=false`.
+- `flapping` is `true` while the check keeps changing state; show a flapping badge.
 
 Actions (operators only):
 
@@ -351,6 +355,13 @@ A channel is a webhook that receives alerts. The customer's own system gets an H
 | `severity` | `["warning"]`, `["critical"]` or both; omit for all |
 | `device_types` | only alerts on these host types; omit for all |
 | `tags` | only alerts on hosts with these tags; omit for all |
+| `site_ids` | only alerts on hosts in these sites; omit for all |
+| `check_ids` | only alerts of these checks (one alarm to its own channel); omit for all |
+| `event_types` | which events to send: `monitoring.incident.opened`, `.updated`, `.acknowledged`, `.resolved`, `.commented`. Default: opened, updated, acknowledged and resolved |
+| `group_by` | send one event for several incidents that share these fields, after `group_wait_seconds`. Allowed: `root_device_id`, `device_id`, `site_id`, `severity`, `check_id`, `plugin`, `device_type`. `["root_device_id"]` turns a switch outage into one message. Empty: every incident on its own |
+| `group_wait_seconds` | 0 to 600; how long to collect a group before sending it (default 30; only used with `group_by`) |
+| `repeat_interval_seconds` | 300 to 604800: resend open, unacknowledged incidents this often (event `monitoring.incident.renotify`); `null` or omitted: never |
+| `steps` | escalation, a list of `{"after_seconds": 0, "labels": {...}, "only_if_unacknowledged": false, "schedule": {...}}`. The first step is the notification itself (`after_seconds` 0); later steps resend after that many seconds, optionally only while nobody acknowledged the incident, with `labels` merged over the channel's, and optionally only within a time window (`schedule`: `from`, `to`, `timezone`, `days`). Escalations arrive as `monitoring.incident.escalated` |
 
 **The `secret` (starts with `whsec_`) is shown once, on create and on rotate, and never again.** The UI must show it in a dialog with a copy button and a clear warning ("You will not be able to see this again. Store it now."), and must not keep it in any list or log. The customer uses it to verify deliveries; the full guide is `docs/monitoring-webhooks.md`. Link to it from the dialog.
 
@@ -360,6 +371,8 @@ Other calls:
 - `PATCH` with `{"enabled": true}` re-enables a channel the service disabled (see `disabled_reason`).
 - `DELETE /channels/{channel_id}` returns `204`.
 - `POST /channels/{channel_id}/test` sends a test event and returns `{"data": {"ok": false, "status_code": 405, "response": "…", "error": null}}`. `ok` is false when the receiver answered an error or was unreachable. A blocked address shows up here in `error`. Show `status_code`, `error` and a short excerpt of `response`.
+- `POST /channels/preview` with `{"severity": "critical", "host_id": "...", "event_type": "monitoring.incident.opened", "check_id": "..."}` (all optional) says which channels such an incident would notify, in evaluation order: `{"data": [{"channel_id": "...", "name": "...", "matched": true, "notifies": true}]}`. `matched` means the filters fit, `notifies` means it would really send. Sends nothing. Use it for a "Which channels would be notified?" helper.
+- `POST /channels/{channel_id}/deliveries/replay` with `from` and `to` (and optional `status` `failed` or `cancelled`) sends all failed deliveries of the channel in that period again, in one call. Returns `202`. The delivery list reaches back 30 days.
 - `POST /channels/{channel_id}/rotate-secret` returns `{"data": {"secret": "whsec_…", "previous_secret_valid_hours": 24}}`. Show the new secret once. The old one keeps working for 24 hours, so the customer can switch over without downtime.
 - `GET /channels/{channel_id}/deliveries?status=` (`pending|delivered|failed|cancelled`) lists delivery attempts, newest first: `id`, `event_id`, `event_type`, `subject`, `status`, `attempts`, `last_status_code`, `last_error`, `delivered_at`, `created_at`. Use it for a "Delivery log" tab with a failed filter.
 - `POST /channels/{channel_id}/deliveries/{delivery_id}/replay` re-queues one delivery; returns `202`. It returns `409` while that delivery is still pending.
@@ -382,6 +395,49 @@ Sites cannot be edited yet; to change one, delete and recreate it. Treat sites a
 
 `GET /tenant` returns `{"data": {"name": "...", "status": "active", "capabilities": ["tenants","hosts","checks","alerts","sites","metrics","notifications","plugins"]}}`. Call it once on entering the monitoring section. It also creates the account's monitoring tenant on first use, so the first call can take a second longer. If `status` is `suspended`, show a banner ("Monitoring is paused for this account") and disable write actions; checks are not running while suspended.
 
+### 3.11 Credentials
+
+What checks log in with: an SNMP community or SNMPv3 user, an HTTP bearer token or basic login, and so on. Needed by plugins whose `credential_types` is not empty. **Secrets are write-only: no endpoint ever returns one**; a credential only shows which secret fields are set.
+
+- `GET /credential-types` returns the kinds and their fields: `{"data": [{"name": "snmp_v2c", "description": "...", "fields_schema": {...}}]}`. In `fields_schema.properties`, a property with `writeOnly: true` is a secret: render it as a password input. Kinds today: `snmp_v2c` (`community`), `snmp_v3` (`username`, `security_level`, `auth_protocol`, `auth_password`, `priv_protocol`, `priv_password`, `context_name`), `http_basic` (`username`, `password`), `http_bearer` (`token`), plus `redfish`, `ipmi`, `xapi`, `rtsp` and `mqtt`.
+- `GET /credentials` lists them:
+
+```json
+{"data": [{"id": "…", "name": "Core switch", "type": "snmp_v2c", "fields": {}, "secrets_set": ["community"]}]}
+```
+
+  `fields` holds the non-secret fields; `secrets_set` names the secret fields that have a value. Show "set" for those, never the value, and never prefill a secret field.
+- `POST /credentials` with `{"name": "...", "type": "snmp_v2c", "fields": {"community": "public"}}` creates one (`201`). The `fields` required by the type must all be present (`422` otherwise).
+- `PATCH /credentials/{credential_id}`: send only what changes. A secret you do not send **keeps its stored value**, so an edit form leaves secret inputs empty and sends one only if the user typed a new one.
+- `DELETE /credentials/{credential_id}` returns `204`, or `409 in-use` while a check still uses it (show the message; the user must change or delete those checks first).
+
+To create an SNMP check: create the credential, create the check with `"credentials": {"auth": "<credential id>"}`, then press "Test now".
+
+Only users with the manager role can see or change credentials; read-only users get `403` on these endpoints, so hide the screen for them.
+
+### 3.12 Collectors (many objects per check)
+
+A plugin with `kind: "collector"` (for example `snmp.interfaces`) reports **many objects in one check**: every port of a switch, every outlet of a PDU. It is created like any check (3.5), needs an SNMP credential, and cannot be the host check. For billing, one collector is one check, however many objects it has.
+
+`GET /checks/{check_id}/objects` lists the objects and the state of each (`[]` for a plain check, or before the first run). Optional filters: `status` (`OK`, `WARNING`, `CRITICAL`, `UNKNOWN`), `include_gone` (`true` or `false`, default true).
+
+```json
+{"data": [{
+  "key": "Gi1/0/2", "name": "Gi1/0/2",
+  "labels": {"alias": "uplink to core", "speed": "1000000000", "if_index": "10102"},
+  "phase": "PROBLEM", "status": "CRITICAL", "since": "2026-10-06T08:00:00Z",
+  "last_output": "Gi1/0/2: down", "last_metrics": {"in_bps": 0, "out_bps": 0},
+  "incident_id": "…", "first_seen_at": "…", "last_seen_at": "…", "gone_at": null
+}]}
+```
+
+- `phase`, `status` and `since` mean what they do on a check (3.5), but per object. `labels` are free text from the device; show `alias` as a subtitle.
+- `gone_at` is set when the device stopped reporting the object (a port filtered out, a card removed). Gone objects are kept for 30 days; show them greyed out, and offer a "Hide removed" toggle that sends `include_gone=false`.
+- Each object has its own alert: a 48-port switch with two ports down has two alerts, each with `object_key` and `object_name`. When the device itself does not answer there is one alert for the check (`object_key` is `null`), not one per port.
+- Graph per object: `GET /hosts/{host_id}/metrics` and `.../metrics/series` accept `object=Gi1/0/2` and every series carries `object`. Interface metrics: `in_bps`, `out_bps`, `in_errors_rate`, `out_errors_rate`, `in_discards_rate`, `out_discards_rate`, `oper_status`, `speed_bps`.
+- `POST /hosts/{host_id}/test` results gain an `objects` list for collectors: `[{"key", "name", "labels", "status", "output", "metrics"}]`; their `metrics` map is empty because collector metrics are per object.
+- The `snmp.interfaces` config (from `GET /plugins`): `include` / `exclude` (regular expressions on name or description), `types` (interface type numbers), `admin_up_only` (default true), `down_status` (`critical`, `warning` or `ok`, for interfaces that are admin up but oper down), `max_interfaces` (default 1000), and the SNMP `port`, `timeout_ms`, `retries`. Minimum interval 60 seconds.
+
 ## 4. Plugins (check types)
 
 `GET /plugins` returns the check types the service offers. **Build the check form from this response instead of hard-coding types**, because new types are added over time (SNMP checks are on the way).
@@ -403,8 +459,9 @@ Sites cannot be edited yet; to change one, delete and recreate it. Treat sites a
 - `config_schema` is a JSON Schema for the check's `config`. Render one field per property (`type`, `default`, `enum` and `description` tell you the input kind, the prefilled value and the help text), and send only the fields the user changed. Required fields are listed in its `required` array when present.
 - `metrics` lists what the check measures: use it for the threshold-rule metric picker and for naming graphs. `unit` is for axis labels.
 - `min_interval_seconds` is the plugin's own floor. Customers have a higher floor of 30 seconds, so use `max(plugin floor, 30)` as the minimum in the form.
-- `credential_types` lists credential kinds a check of this type can use. The API has no credentials endpoints yet, so ignore a plugin that needs a credential (any plugin whose `config_schema` or description requires one), or show it disabled with "not available yet". `http` and `icmp` work without one.
-- The list can include plugins that customers cannot use yet, for example SNMP, because private networks are unreachable. If a check of such a type fails, the check output explains why.
+- `kind` is `check` (one result per run) or `collector` (one result per object, for example every port of a switch; see 3.12).
+- `credential_types` lists the credential kinds a check of this type can use (empty: none needed). A plugin with credential types needs a credential in the `auth` role: create it first (3.11), then pass its id when you create the check. `http` and `icmp` work without one.
+- The list includes plugins that customers cannot always use yet. SNMP plugins (`snmp.system`, `snmp.get`, `snmp.ups`, and the `snmp.interfaces` collector) talk to devices that are usually on private networks, which customers cannot reach until remote probes exist; such a check fails with an explanation in its output. Offer them, but explain that the device must be reachable from the internet.
 
 The two types that exist today, for reference:
 
@@ -448,13 +505,13 @@ Pick a sensible form for each: the UI should show the plugin's own fields, with 
 
 ## 6. Known gaps (do not build around them; ask the backend)
 
-1. **No credentials endpoints.** Plugins that need a credential (SNMP) cannot be set up through this API yet.
-2. **No role endpoint.** The UI discovers read-only users by the first `403 forbidden`.
-3. **No alert comments list**, no escalation, no schedules. Alerts can be acknowledged (with a note) and resolved.
-4. **No credentials, no dependency map, no SNMP checks.** Not available through this API.
-5. **No email or in-app notification.** Channels (webhooks) are the only notification route.
-6. **Sites cannot be edited.**
-7. **Lists are not paginated.** If an account grows past a few hundred hosts, the host list and alerts need paging; ask the backend.
+1. **No role endpoint.** The UI discovers read-only users by the first `403 forbidden`.
+2. **No alert comments list.** Alerts can be acknowledged (with a note) and resolved.
+3. **No dependency map** (which host depends on which); suppression of dependent alerts happens on the server and is visible through `suppressed` on an alert.
+4. **No email or in-app notification.** Channels (webhooks) are the only notification route.
+5. **Sites cannot be edited.**
+6. **Lists are not paginated.** If an account grows past a few hundred hosts, the host list and alerts need paging; ask the backend.
+7. **Private networks.** Checks to private addresses (most switches, UPSs and PDUs) cannot run for customers yet.
 
 ## 7. Quick reference
 
@@ -489,6 +546,14 @@ Pick a sensible form for each: the UI should show the plugin's own fields, with 
 | rotate secret | `POST /channels/{channel_id}/rotate-secret` |
 | delivery log | `GET /channels/{channel_id}/deliveries` |
 | replay delivery | `POST /channels/{channel_id}/deliveries/{delivery_id}/replay` |
+| credential kinds | `GET /credential-types` |
+| list credentials | `GET /credentials` |
+| create credential | `POST /credentials` |
+| edit credential | `PATCH /credentials/{credential_id}` |
+| delete credential | `DELETE /credentials/{credential_id}` |
+| objects of a collector | `GET /checks/{check_id}/objects` |
+| which channels would be notified | `POST /channels/preview` |
+| replay failed deliveries in bulk | `POST /channels/{channel_id}/deliveries/replay` |
 | list sites | `GET /sites` |
 | create site | `POST /sites` |
 | delete site | `DELETE /sites/{site_id}` |

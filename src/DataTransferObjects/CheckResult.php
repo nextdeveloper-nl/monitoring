@@ -16,6 +16,8 @@ final class CheckResult
         public readonly ?int $durationMs = null,
         public readonly array $metrics = [],
         public readonly array $raw = [],
+        /** Collectors: one entry per object (key, name, labels, status, output, metrics). Empty for plain checks. */
+        public readonly array $objects = [],
     ) {
     }
 
@@ -29,6 +31,7 @@ final class CheckResult
             'output' => $this->output,
             'duration_ms' => $this->durationMs,
             'metrics' => $this->metrics,
+            'objects' => $this->objects,
         ];
     }
 }

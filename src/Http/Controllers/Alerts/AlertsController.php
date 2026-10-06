@@ -15,7 +15,10 @@ class AlertsController extends AbstractMonitoringController
             'severity' => 'sometimes|string|in:warning,critical',
             'host_id' => 'sometimes|string',
             'check_id' => 'sometimes|string',
+            'object_key' => 'sometimes|string|max:500',
+            'suppressed' => 'sometimes|in:true,false,1,0',
         ]);
+        $filters = $this->booleans($filters, ['suppressed']);
 
         return $this->respond(fn () => ['data' => $this->service->listAlerts($filters)]);
     }

@@ -92,3 +92,7 @@ The local `monitoring_tenants` row is created once and trusted afterwards, but t
 - Administrators can restore a deleted tenant as it was (with its content) with `POST /monitoring/servers/{server_id}/tenants/{account_id}/restore`.
 
 Every failed monitoring request is logged with the upstream call, status, problem type and request id.
+
+### Monitoring service v0.5 features exposed
+
+Credentials (`/monitoring/credentials`, `/monitoring/credential-types`; secrets write-only, manager and admin roles only), credentials on checks, collector objects (`/monitoring/checks/{id}/objects`), per-object alerts and metrics, alert `suppressed` and `object_key` filters, channel options (grouping, reminders, escalation steps, event types, site and check filters), channel preview (`POST /monitoring/channels/preview`) and bulk replay of failed deliveries. Boolean query filters accept `true`, `false`, `1` and `0`.

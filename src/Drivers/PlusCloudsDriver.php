@@ -10,7 +10,9 @@ use DateTimeZone;
 use NextDeveloper\Monitoring\Contracts\ChecksConnection;
 use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
 use NextDeveloper\Monitoring\Contracts\ListsPlugins;
+use NextDeveloper\Monitoring\Contracts\ListsCheckObjects;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
+use NextDeveloper\Monitoring\Contracts\ManagesCredentials;
 use NextDeveloper\Monitoring\Contracts\RestoresTenants;
 use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ReportsUsage;
@@ -23,6 +25,7 @@ use NextDeveloper\Monitoring\DataTransferObjects\Webhook;
 use NextDeveloper\Monitoring\DataTransferObjects\Check;
 use NextDeveloper\Monitoring\DataTransferObjects\CheckResult;
 use NextDeveloper\Monitoring\DataTransferObjects\CheckState;
+use NextDeveloper\Monitoring\DataTransferObjects\Credential;
 use NextDeveloper\Monitoring\Enums\AlertSeverity;
 use NextDeveloper\Monitoring\Enums\AlertStatus;
 use NextDeveloper\Monitoring\Enums\CheckStatus;
@@ -45,12 +48,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects
 {
     /** Set by actingAs(): the user whose role applies to tenant calls. Null = the platform, with full rights in the tenant. */
     protected ?string $actor = null;
 
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors'];
 
     public function driverName(): string
     {
@@ -142,6 +145,22 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         );
     }
 
+    /** Query parameters: null is dropped, booleans become the true/false the service expects (a plain array_filter would drop false). */
+    protected function query(array $params): array
+    {
+        $out = [];
+
+        foreach ($params as $key => $value) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+
+            $out[$key] = is_bool($value) ? ($value ? 'true' : 'false') : $value;
+        }
+
+        return $out;
+    }
+
     /** Tenant-scoped calls act in the tenant named by its external id (the account UUID). */
     protected function tenantHeaders(string $tenantId): array
     {
@@ -184,7 +203,7 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         $cursor = null;
 
         do {
-            $page = $this->request('GET', $this->path('devices'), [], array_filter($filters + ['limit' => 500, 'cursor' => $cursor]), $this->tenantHeaders($tenantId));
+            $page = $this->request('GET', $this->path('devices'), [], $this->query($filters + ['limit' => 500, 'cursor' => $cursor]), $this->tenantHeaders($tenantId));
 
             foreach ($page['items'] ?? [] as $device) {
                 $hosts->push($this->toHost($device));
@@ -276,7 +295,7 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         $path = $hostId ? "devices/{$hostId}/checks" : 'checks';
 
         do {
-            $page = $this->request('GET', $this->path($path), [], array_filter($filters + ['limit' => 500, 'cursor' => $cursor], fn ($v) => $v !== null), $this->tenantHeaders($tenantId));
+            $page = $this->request('GET', $this->path($path), [], $this->query($filters + ['limit' => 500, 'cursor' => $cursor]), $this->tenantHeaders($tenantId));
 
             foreach ($page['items'] ?? [] as $item) {
                 $checks->push($this->toCheck($item));
@@ -372,6 +391,7 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
             isset($r['duration_ms']) ? (int) round($r['duration_ms']) : null,
             $r['metrics'] ?? [],
             $r,
+            $r['objects'] ?? [],
         ))->values();
     }
 
@@ -425,13 +445,13 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
     }
 
     /** What is stored for a host and/or check: id, plugin, object, name, unit, kind, retention_class. At most 200. */
-    public function listMetricSeries(string $tenantId, ?string $hostId = null, ?string $checkId = null, array $keys = []): Collection
+    public function listMetricSeries(string $tenantId, ?string $hostId = null, ?string $checkId = null, array $keys = [], ?string $object = null): Collection
     {
         if (! $hostId && ! $checkId) {
             throw new InvalidArgumentException('listMetricSeries needs a host id or a check id.');
         }
 
-        $query = array_filter(['device_id' => $hostId, 'check_id' => $checkId], fn ($v) => $v !== null);
+        $query = $this->query(['device_id' => $hostId, 'check_id' => $checkId, 'object' => $object]);
         $response = $this->request('GET', $this->path('metrics/series').$this->queryString($query, ['name' => $keys]), [], [], $this->tenantHeaders($tenantId));
 
         return collect($response['items'] ?? [])->values();
@@ -453,7 +473,7 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         return $parts ? '?'.implode('&', $parts) : '';
     }
 
-    /** Alerts are incidents. Filters: status (open|acknowledged|resolved|active), severity, device_id (or host_id), check_id. */
+    /** Alerts are incidents. Filters: status (open|acknowledged|resolved|active), severity, device_id (or host_id), check_id, object_key, suppressed (bool). */
     public function listAlerts(string $tenantId, array $filters = []): Collection
     {
         if (isset($filters['host_id'])) {
@@ -465,7 +485,7 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         $cursor = null;
 
         do {
-            $page = $this->request('GET', $this->path('incidents'), [], array_filter($filters + ['limit' => 500, 'cursor' => $cursor]), $this->tenantHeaders($tenantId));
+            $page = $this->request('GET', $this->path('incidents'), [], $this->query($filters + ['limit' => 500, 'cursor' => $cursor]), $this->tenantHeaders($tenantId));
 
             foreach ($page['items'] ?? [] as $incident) {
                 $alerts->push($this->toAlert($incident));
@@ -696,6 +716,10 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
             'match' => $route->match ?: null,
             'continue' => $route->continue,
             'labels' => $route->labels ?: null,
+            'group_by' => $route->groupBy ?: null,
+            'group_wait_seconds' => $route->groupWaitSeconds,
+            'repeat_interval_seconds' => $route->repeatIntervalSeconds,
+            'steps' => $route->steps ?: null,
         ], fn ($v) => $v !== null);
 
         return $this->toAlertRoute($this->upsertByExternalId($tenantId, 'alert-routes', $route->externalId, $route->externalType, $body));
@@ -708,7 +732,72 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
 
     protected function toAlertRoute(array $r): AlertRoute
     {
-        return new AlertRoute($r['id'] ?? null, (string) ($r['name'] ?? ''), (string) ($r['endpoint_id'] ?? ''), $r['position'] ?? null, (bool) ($r['enabled'] ?? true), $r['match'] ?? [], (bool) ($r['continue'] ?? false), $r['labels'] ?? [], $r['external']['id'] ?? null, $r['external']['type'] ?? null, $r);
+        return new AlertRoute($r['id'] ?? null, (string) ($r['name'] ?? ''), (string) ($r['endpoint_id'] ?? ''), $r['position'] ?? null, (bool) ($r['enabled'] ?? true), $r['match'] ?? [], (bool) ($r['continue'] ?? false), $r['labels'] ?? [], $r['external']['id'] ?? null, $r['external']['type'] ?? null, $r, $r['group_by'] ?? [], $r['group_wait_seconds'] ?? null, $r['repeat_interval_seconds'] ?? null, $r['steps'] ?? []);
+    }
+
+    public function replayWebhookDeliveries(string $tenantId, string $webhookId, DateTimeInterface $from, DateTimeInterface $to, string $status = 'failed'): void
+    {
+        $this->request('POST', $this->path("webhooks/{$webhookId}/deliveries/replay").'?'.http_build_query($this->query([
+            'status' => $status,
+            'from' => DateTimeImmutable::createFromInterface($from)->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\\TH:i:s\\Z'),
+            'to' => DateTimeImmutable::createFromInterface($to)->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\\TH:i:s\\Z'),
+        ])), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    public function previewAlertRoutes(string $tenantId, array $sample): Collection
+    {
+        $response = $this->request('POST', $this->path('alert-routes/test'), $sample, [], $this->tenantHeaders($tenantId));
+
+        return collect($response['routes'] ?? [])->values();
+    }
+
+    public function listCredentialTypes(string $tenantId): Collection
+    {
+        return collect($this->request('GET', $this->path('credential-types'), [], [], $this->tenantHeaders($tenantId))['items'] ?? [])->values();
+    }
+
+    public function listCredentials(string $tenantId): Collection
+    {
+        return $this->listAll($tenantId, 'credentials', fn (array $c) => $this->toCredential($c));
+    }
+
+    public function getCredential(string $tenantId, string $credentialId): Credential
+    {
+        return $this->toCredential($this->request('GET', $this->path("credentials/{$credentialId}"), [], [], $this->tenantHeaders($tenantId)));
+    }
+
+    public function createCredential(string $tenantId, Credential $credential): Credential
+    {
+        return $this->toCredential($this->request('POST', $this->path('credentials'), $this->credentialBody($credential), [], $this->tenantHeaders($tenantId)));
+    }
+
+    /** PUT replaces; a secret field that is not sent keeps its stored value, so callers send only the secrets they change. */
+    public function updateCredential(string $tenantId, string $credentialId, Credential $credential): Credential
+    {
+        return $this->toCredential($this->request('PUT', $this->path("credentials/{$credentialId}"), $this->credentialBody($credential), [], $this->tenantHeaders($tenantId)));
+    }
+
+    public function deleteCredential(string $tenantId, string $credentialId): void
+    {
+        $this->request('DELETE', $this->path("credentials/{$credentialId}"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    protected function credentialBody(Credential $c): array
+    {
+        return ['name' => $c->name, 'type' => $c->type, 'fields' => (object) $c->fields];
+    }
+
+    /** Never copies anything secret: the server only says which secret fields are set. */
+    protected function toCredential(array $c): Credential
+    {
+        return new Credential($c['id'] ?? null, (string) ($c['name'] ?? ''), (string) ($c['type'] ?? ''), $c['fields'] ?? [], $c['secrets_set'] ?? [], array_diff_key($c, ['fields' => 1]));
+    }
+
+    public function listCheckObjects(string $tenantId, string $checkId, ?string $status = null, bool $includeGone = true): Collection
+    {
+        $response = $this->request('GET', $this->path("checks/{$checkId}/objects"), [], $this->query(['status' => $status, 'include_gone' => $includeGone]), $this->tenantHeaders($tenantId));
+
+        return collect($response['items'] ?? [])->values();
     }
 
     public function pushMetrics(string $tenantId, string $hostId, iterable $metrics): void
