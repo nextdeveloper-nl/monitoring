@@ -7,6 +7,7 @@ use Illuminate\Support\Collection;
 use InvalidArgumentException;
 use DateTimeImmutable;
 use DateTimeZone;
+use NextDeveloper\Monitoring\Contracts\ChecksConnection;
 use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
 use NextDeveloper\Monitoring\Contracts\ListsPlugins;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
@@ -43,12 +44,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection
 {
     /** Set by actingAs(): the user whose role applies to tenant calls. Null = the platform, with full rights in the tenant. */
     protected ?string $actor = null;
 
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection'];
 
     public function driverName(): string
     {
@@ -533,6 +534,15 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         } while ($cursor);
 
         return $items;
+    }
+
+    /**
+     * A platform-level read (the tenant list, one row), so it proves both reachability and that the platform key is accepted.
+     * A wrong or tenant-level key is rejected by the server (401/403).
+     */
+    public function checkConnection(): void
+    {
+        $this->request('GET', $this->path('tenants'), [], ['limit' => 1]);
     }
 
     /** Plugin manifests as the server serves them. Not paginated; the list is short. */

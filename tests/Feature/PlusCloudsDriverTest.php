@@ -222,7 +222,7 @@ class PlusCloudsDriverTest extends TestCase
 
     public function test_push_is_unsupported_and_capabilities_listed(): void
     {
-        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins'] as $capability) {
+        foreach (['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection'] as $capability) {
             $this->assertTrue($this->driver->supports($capability), $capability);
         }
         $this->assertFalse($this->driver->supports('push'));
@@ -367,6 +367,19 @@ class PlusCloudsDriverTest extends TestCase
         $this->assertSame(['icmp', 'http'], $plugins->pluck('type')->all());
         $this->assertStringEndsWith('/v1/plugins', $this->sent()->url());
         $this->assertSame(self::TENANT, $this->sent()->header('X-Tenant-External-ID')[0]);
+    }
+
+    public function test_check_connection_reads_tenants_with_the_platform_key_and_fails_on_rejection(): void
+    {
+        $this->fake(['*' => Http::response(['items' => [], 'next_cursor' => null])]);
+        $this->driver->checkConnection();
+        $this->assertStringContainsString('/v1/tenants?limit=1', $this->sent()->url());
+        $this->assertSame('Bearer mon_abc_secret', $this->sent()->header('Authorization')[0]);
+        $this->assertFalse($this->sent()->hasHeader('X-Tenant-External-ID'));
+
+        $this->fake(['*' => Http::response(['type' => 'https://monitor.plusclouds.com/problems/unauthorized', 'status' => 401], 401)]);
+        $this->expectException(ApiRequestFailed::class);
+        $this->driver->checkConnection();
     }
 
     public function test_problem_response_becomes_api_request_failed_with_body(): void
