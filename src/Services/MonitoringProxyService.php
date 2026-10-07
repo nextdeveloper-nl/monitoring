@@ -13,6 +13,7 @@ use NextDeveloper\Monitoring\Contracts\ListsCheckObjects;
 use NextDeveloper\Monitoring\Contracts\ListsPlugins;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
 use NextDeveloper\Monitoring\Contracts\ManagesMqtt;
+use NextDeveloper\Monitoring\Contracts\ResolvesVirtualMachines;
 use NextDeveloper\Monitoring\Contracts\RotatesPushTokens;
 use NextDeveloper\Monitoring\Contracts\ManagesCredentials;
 use NextDeveloper\Monitoring\Contracts\ManagesMembers;
@@ -320,6 +321,95 @@ class MonitoringProxyService
         [$driver, $id] = $this->context();
 
         $this->mqttDriver($driver)->unbindHostMqtt($id, $hostId);
+    }
+
+    // ---- VM monitoring (the PlusClouds VM agent; opt-in per VM) ----
+
+    /** Source type recorded on the monitoring service for a VM device (the full model class, as for other generic references). */
+    private const VM_EXTERNAL_TYPE = 'NextDeveloper\\IAAS\\Database\\Models\\VirtualMachines';
+
+    /** Whether monitoring is on for a VM of the account: the vm.agent check and its state. Needs no ownership lookup, it only reads this account's tenant. */
+    public function vmMonitoring(string $vmId): array
+    {
+        [$driver, $id] = $this->context();
+        $check = $this->vmAgentCheck($this->checksDriver($driver), $id, $vmId);
+
+        return $this->vmMonitoringStatus($vmId, $check, $check ? $this->checksDriver($driver)->getCheckState($id, $check->id) : null);
+    }
+
+    /**
+     * Turns monitoring on for a VM: checks that the VM is the current user's (the monitoring service cannot, and the first
+     * tenant to monitor a VM UUID receives its metrics), creates or reuses the VM's device and adds the vm.agent check.
+     * Idempotent. A 409 from the service (another account already receives this VM's telemetry) passes through.
+     */
+    public function enableVmMonitoring(string $vmId): array
+    {
+        $vm = $this->resolveVm($vmId);
+
+        [$driver, $id] = $this->context();
+        $checks = $this->checksDriver($driver);
+
+        if ($existing = $this->vmAgentCheck($checks, $id, $vm['uuid'])) {
+            return $this->vmMonitoringStatus($vm['uuid'], $existing, $checks->getCheckState($id, $existing->id));
+        }
+
+        // The device is keyed by the VM's UUID, so a device the customer already made for this VM is reused.
+        $host = $driver->createHost($id, new Host(
+            null, $vm['name'], type: 'vm', externalId: $vm['uuid'], externalType: self::VM_EXTERNAL_TYPE,
+        ));
+
+        // The VM agent check is the host check (down when the VM is off or its agent stops) unless the device already has one.
+        $hasHostCheck = $checks->listChecks($id, $host->id)->contains(fn (Check $c) => $c->isHostCheck);
+
+        $check = $checks->createCheck($id, new Check(
+            null, $host->id, 'VM agent', 'vm.agent', ['vm_uuid' => $vm['uuid']], null, true, [], ! $hasHostCheck, ['failure_count' => 1],
+        ));
+
+        return $this->vmMonitoringStatus($vm['uuid'], $check, null);
+    }
+
+    /** Turns monitoring off: removes the vm.agent check, so the telemetry of the VM is dropped again. The device and its other checks stay. */
+    public function disableVmMonitoring(string $vmId): void
+    {
+        [$driver, $id] = $this->context();
+        $checks = $this->checksDriver($driver);
+
+        if ($check = $this->vmAgentCheck($checks, $id, $vmId)) {
+            $checks->deleteCheck($id, $check->id);
+        }
+    }
+
+    /** The current user's VM, or a 404 that does not say whether the VM exists. */
+    private function resolveVm(string $vmId): array
+    {
+        if (! app()->bound(ResolvesVirtualMachines::class)) {
+            throw UnsupportedOperation::for('host application', 'vm_monitoring');
+        }
+
+        $vm = app(ResolvesVirtualMachines::class)->find($vmId);
+
+        if (! $vm) {
+            throw new ApiRequestFailed('Virtual machine not found.', 404, ['error' => ['type' => 'not-found']]);
+        }
+
+        return $vm;
+    }
+
+    private function vmAgentCheck(ManagesChecks $checks, string $tenantId, string $vmId): ?Check
+    {
+        return $checks->listChecks($tenantId, null, ['plugin' => 'vm.agent'])
+            ->first(fn (Check $c) => strcasecmp((string) ($c->config['vm_uuid'] ?? ''), $vmId) === 0);
+    }
+
+    private function vmMonitoringStatus(string $vmId, ?Check $check, $state): array
+    {
+        return [
+            'vm_id' => $vmId,
+            'enabled' => $check !== null,
+            'host_id' => $check?->hostId,
+            'check_id' => $check?->id,
+            'state' => $state?->toArray(),
+        ];
     }
 
     // ---- alerts (incidents) ----

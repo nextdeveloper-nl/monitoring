@@ -37,6 +37,15 @@ Route::prefix('monitoring')->group(
             }
         );
 
+        // VM monitoring through the VM agent: opt-in per VM
+        Route::prefix('vms')->group(
+            function () {
+                Route::get('{vm_id}', 'Vms\VmMonitoringController@show');
+                Route::post('{vm_id}/enable', 'Vms\VmMonitoringController@enable');
+                Route::delete('{vm_id}', 'Vms\VmMonitoringController@disable');
+            }
+        );
+
         Route::prefix('hosts')->group(
             function () {
                 Route::get('/', 'Hosts\HostsController@index');

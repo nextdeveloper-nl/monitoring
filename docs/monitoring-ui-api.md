@@ -556,6 +556,16 @@ Available on checks whose plugin has a `whoopsy_metric` in `GET /plugins` (`http
 - Push checks in the check object: `push` is `null` for polled checks; for a push check it is `{"ingest_path", "ingest_url" (null when the service has no public URL), "token_prefix", "token_created_at", "last_push_at"}`. **`push_token` is returned only in the response to `POST /hosts/{host_id}/checks` that creates a push check and in the response to the rotate call, once and never again** (format `mpush_<8>_<43 base62>`): show it to the user at once, with a copy button and a warning that it cannot be shown again. Never log it.
 - `POST /checks/{check_id}/rotate-token` (operator role): returns the check with a new `push_token`; the old token stops at once. 409 `not-push` for a polled check.
 
+#### VM monitoring through the VM agent (monitoring service v0.12.0)
+
+Every VM's agent already publishes telemetry every 30 s. It is stored only for VMs the customer has switched monitoring on for ("Enable monitoring" on the VM page); nothing is monitored until then.
+
+- `GET /vms/{vm_id}`: `{vm_id, enabled, host_id, check_id, state}`; `state` is the check state (status, output such as "CPU 12.5 %, memory 25.0 %, 2 disks, 1 interfaces") or null.
+- `POST /vms/{vm_id}/enable` (operator role; 201): checks that the VM belongs to the current user (404 otherwise), creates or reuses the VM's device (type `vm`, external id the VM id) and adds the `vm.agent` check. It is the host check unless the device already has one. Idempotent. Data arrives within about 30 s. 409 when another account already receives this VM's telemetry: show the message, do not retry.
+- `DELETE /vms/{vm_id}` (operator role; 204): removes the check, so the telemetry is dropped again. The device and its other checks stay.
+- Then use the existing endpoints with the `check_id` and `host_id`: `GET /checks/{id}/state`; `GET /checks/{id}/objects`, one object per part, each with `last_metrics`: `host` (cpu_usage_pct, cpu_cores, load1/5/15, memory_usage_pct, memory_used_bytes, memory_total_bytes), `disk:<mountpoint>` (disk_usage_pct, used and total bytes, disk_read/write_bytes_per_s, disk_read/write_iops, disk_util_pct), `net:<interface>` (net_up, net_rx/tx_bits_per_s; a down interface is a WARNING object); graphs through `GET /hosts/{host_id}/metrics` with `object`; thresholds with `"object": "*"` or one key, for example `{"metric":"disk_usage_pct","object":"*","warning":{"op":">","value":85}}`. Silence for 3 intervals (60 s each by default) makes the check CRITICAL. `vm.agent` is also in the plugin list; do not offer it in the generic "add check" picker, use the VM page button.
+- Not included yet: states of services (failed systemd services).
+
 #### MQTT devices (monitoring service v0.10.0; the broker is off until the service owner enables it)
 
 Sensors can publish over MQTT to the monitoring service's broker instead of calling the ingest URL. Topics: `<prefix>/<device_key>/...`, for example `fixlean/246F28AABBCC/telemetry`. Ports: TLS 8883, plain 1883 only for credentials with `allow_plain`.
