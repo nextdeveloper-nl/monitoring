@@ -508,6 +508,16 @@ Available on checks whose plugin has a `whoopsy_metric` in `GET /plugins` (`http
   Flow: show the price (`billing`) and a clear confirmation ("Turn on Whoopsy! for this check? It is billed at 5 times the normal price while on."), and only then send `confirm_price: true`. The refused call changes nothing.
 - `DELETE /checks/{check_id}/whoopsy` turns it off (`204`). The normal price applies again from that moment.
 - `POST /checks/{check_id}/whoopsy/reset` accepts a new normal: the band is learned again from the next results and an open Whoopsy! alert resolves with the next result. `409 whoopsy-off` if it is off. Offer it as "This is the new normal" on a Whoopsy! alert: **the band stays at the last normal while results break it**, so a lasting slowdown keeps alerting until results return to the band or someone presses reset.
+- `GET /checks/{check_id}/whoopsy/band?from=&to=` returns the band the engine **actually used for each result**, for drawing the moving average line and the shaded normal range on the graph of the watched metric. Default window: the last hour; at most 7 days and 20,000 points (`422 invalid-value` on `from` beyond that). Cheap enough to poll every 30 seconds for the last hour. Readable by read-only users.
+
+```json
+{"data": {"check_id": "…", "from": "…", "to": "…", "points": [
+  {"t": "2026-10-08T00:05:13Z", "value": 70.2, "mean": null, "stddev": null, "lower": null, "upper": null, "outside": false, "hits": 0, "alerting": false},
+  {"t": "2026-10-08T00:06:43Z", "value": 26.5, "mean": 38.3, "stddev": 27.4, "lower": null, "upper": 93.6, "outside": false, "hits": 0, "alerting": false}
+]}}
+```
+
+  One point per result while Whoopsy! was on, oldest first. `mean`, `stddev`, `lower` and `upper` are `null` while the band is still learning (fewer results than `settings.window`); afterwards `lower` is `null` when the direction is `above` and `upper` is `null` when it is `below`, so draw only the side that exists. `mean` is the average of the window of results before that point (the point itself is excluded, and results that broke the band are left out of it), exactly what the result was judged against, and it follows the settings that were in force at that time, so changing the settings never redraws the past. `outside` marks a result that broke the band, `hits` counts results in a row outside (this one included) and `alerting` says whether Whoopsy! was alerting after it. Points exist only from the day this was introduced and for 7 days back; earlier results have no band, so draw none (an empty `points` list).
 - Alerts it raises have `rule_id` `"whoopsy"` and `rule_name` `"Whoopsy!"`; the summary says what happened, for example `Whoopsy!: total_ms = 1000, above 581.65 (moving average 500 ± 1 standard deviations of 81.65 over the last 7 results, 3 in a row)`. Show a Whoopsy! badge on them. Webhooks carry the same `data.check.rule_id`.
 - Changing a check (`PATCH /checks/{id}`) never changes Whoopsy!.
 
@@ -632,6 +642,7 @@ Pick a sensible form for each: the UI should show the plugin's own fields, with 
 | Whoopsy! on or settings | `PUT /checks/{check_id}/whoopsy` |
 | Whoopsy! off | `DELETE /checks/{check_id}/whoopsy` |
 | Whoopsy! new normal | `POST /checks/{check_id}/whoopsy/reset` |
+| Whoopsy! band history for graphs | `GET /checks/{check_id}/whoopsy/band` |
 | which channels would be notified | `POST /channels/preview` |
 | replay failed deliveries in bulk | `POST /channels/{channel_id}/deliveries/replay` |
 | list sites | `GET /sites` |

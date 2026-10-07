@@ -532,6 +532,23 @@ class PlusCloudsDriverTest extends TestCase
         $this->assertStringEndsWith('/v1/usage/weights', $this->sent()->url());
     }
 
+    public function test_whoopsy_band_history_passes_the_range_and_returns_points(): void
+    {
+        $this->fake(['*' => Http::response(['check_id' => 'c1', 'from' => '2026-10-08T10:00:00Z', 'to' => '2026-10-08T11:00:00Z', 'points' => [
+            ['t' => '2026-10-08T10:00:30Z', 'value' => 70.2, 'mean' => null, 'stddev' => null, 'lower' => null, 'upper' => null, 'outside' => false, 'hits' => 0, 'alerting' => false],
+            ['t' => '2026-10-08T10:01:00Z', 'value' => 26.5, 'mean' => 38.3, 'stddev' => 27.4, 'lower' => null, 'upper' => 93.6, 'outside' => false, 'hits' => 0, 'alerting' => false],
+        ]])]);
+
+        $band = $this->driver->whoopsyBand(self::TENANT, 'c1', new \DateTimeImmutable('2026-10-08T10:00:00Z'), new \DateTimeImmutable('2026-10-08T11:00:00Z'));
+
+        $this->assertStringContainsString('/v1/checks/c1/whoopsy/band?', urldecode($this->sent()->url()));
+        $this->assertStringContainsString('from=2026-10-08T10:00:00', urldecode($this->sent()->url()));
+        $this->assertCount(2, $band['points']);
+        $this->assertNull($band['points'][0]['mean']);
+        $this->assertNull($band['points'][1]['lower']);
+        $this->assertSame(93.6, $band['points'][1]['upper']);
+    }
+
     public function test_problem_response_becomes_api_request_failed_with_body(): void
     {
         $this->fake(['*' => Http::response(['type' => 'https://monitor.plusclouds.com/problems/tenant-suspended', 'status' => 403], 403)]);

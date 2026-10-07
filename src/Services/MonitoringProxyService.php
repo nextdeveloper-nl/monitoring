@@ -551,6 +551,23 @@ class MonitoringProxyService
         return $this->whoopsyStatus($whoopsy, $id, $checkId, $whoopsy->resetWhoopsy($id, $checkId));
     }
 
+    /**
+     * The band Whoopsy! used for each result in the window (default: the last hour), for drawing the moving average and
+     * the normal range on a graph. Recorded by the engine when it judged the result, under the settings in force then, so
+     * the drawn band is exactly what the result was compared with. At most 7 days and 20,000 points. Exists only from
+     * the monitoring service v0.8.0 on: results before that have no recorded band.
+     *
+     * Each point: t, value, mean, stddev, lower, upper (null while learning; lower is null for direction "above",
+     * upper is null for "below"), outside (the result broke the band), hits (results in a row outside, this one included),
+     * alerting (Whoopsy! was alerting after this result).
+     */
+    public function whoopsyBand(string $checkId, ?string $from = null, ?string $to = null): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->whoopsyDriver($driver)->whoopsyBand($id, $checkId, $from ? Carbon::parse($from) : null, $to ? Carbon::parse($to) : null);
+    }
+
     private function whoopsyDriver($driver): ManagesWhoopsy
     {
         return $driver instanceof ManagesWhoopsy ? $driver : throw UnsupportedOperation::for($driver->driverName(), 'whoopsy');

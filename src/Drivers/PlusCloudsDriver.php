@@ -851,6 +851,21 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
         return $this->request('POST', $this->path("checks/{$checkId}/whoopsy/reset"), [], [], $this->tenantHeaders($tenantId));
     }
 
+    public function whoopsyBand(string $tenantId, string $checkId, ?DateTimeInterface $from = null, ?DateTimeInterface $to = null): array
+    {
+        $response = $this->request('GET', $this->path("checks/{$checkId}/whoopsy/band"), [], $this->query([
+            'from' => $from?->format(DATE_ATOM),
+            'to' => $to?->format(DATE_ATOM),
+        ]), $this->tenantHeaders($tenantId));
+
+        return [
+            'check_id' => $response['check_id'] ?? $checkId,
+            'from' => $response['from'] ?? null,
+            'to' => $response['to'] ?? null,
+            'points' => $response['points'] ?? [],
+        ];
+    }
+
     public function whoopsyPricing(string $tenantId): array
     {
         $w = $this->request('GET', $this->path('usage/weights'), [], [], $this->tenantHeaders($tenantId));

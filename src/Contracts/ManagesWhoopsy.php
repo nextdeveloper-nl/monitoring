@@ -21,6 +21,14 @@ interface ManagesWhoopsy
     public function resetWhoopsy(string $tenantId, string $checkId): array;
 
     /**
+     * The band the engine actually used for each result while Whoopsy! was on (recorded at evaluation time, under the
+     * settings in force then). Default window: the last hour; at most 7 days and 20,000 points, else 422 on `from`.
+     *
+     * @return array{check_id: string, from: ?string, to: ?string, points: array<int, array>} points: t, value, mean, stddev, lower, upper, outside, hits, alerting
+     */
+    public function whoopsyBand(string $tenantId, string $checkId, ?\DateTimeInterface $from = null, ?\DateTimeInterface $to = null): array;
+
+    /**
      * What Whoopsy! costs: the plugin weights and the multiplier from the service's usage configuration.
      *
      * @return array{multiplier: int, default_weight: int, weights: array<string, int>}

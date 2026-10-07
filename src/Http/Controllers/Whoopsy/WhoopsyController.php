@@ -37,6 +37,14 @@ class WhoopsyController extends AbstractMonitoringController
         return $this->respond(fn () => ['data' => $this->service->setWhoopsy($checkId, $data, $confirm)]);
     }
 
+    /** The band Whoopsy! used for each result in the window, to draw on a graph. */
+    public function band(Request $request, string $checkId): JsonResponse
+    {
+        $params = $request->validate(['from' => 'sometimes|date', 'to' => 'sometimes|date|after:from']);
+
+        return $this->respond(fn () => ['data' => $this->service->whoopsyBand($checkId, $params['from'] ?? null, $params['to'] ?? null)]);
+    }
+
     public function destroy(string $checkId): JsonResponse
     {
         return $this->respond(function () use ($checkId) {
