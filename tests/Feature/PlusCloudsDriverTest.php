@@ -119,7 +119,7 @@ class PlusCloudsDriverTest extends TestCase
 
     public function test_host_status_mapping(): void
     {
-        foreach (['up' => HostStatus::Up, 'down' => HostStatus::Down, 'disabled' => HostStatus::Disabled, 'unmonitored' => HostStatus::Unknown, 'unknown' => HostStatus::Unknown] as $availability => $expected) {
+        foreach (['up' => HostStatus::Up, 'down' => HostStatus::Down, 'disabled' => HostStatus::Disabled, 'unusual' => HostStatus::Unusual, 'unmonitored' => HostStatus::Unknown, 'unknown' => HostStatus::Unknown] as $availability => $expected) {
             $this->fake(['*' => Http::response(['id' => 'd', 'name' => 'n', 'status' => ['availability' => $availability]])]);
 
             $this->assertSame($expected, $this->driver->getHost(self::TENANT, 'd')->status, $availability);

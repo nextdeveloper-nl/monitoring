@@ -14,7 +14,7 @@ class HostsController extends AbstractMonitoringController
             'type' => 'sometimes|string',
             'site_id' => 'sometimes|string',
             'parent_id' => 'sometimes|string',
-            'availability' => 'sometimes|string|in:up,down,unknown,unmonitored,disabled',
+            'availability' => 'sometimes|string|in:up,down,unusual,unknown,unmonitored,disabled',
         ]);
 
         return $this->respond(fn () => ['data' => $this->service->listHosts($filters)]);

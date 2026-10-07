@@ -279,6 +279,7 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
                 'up' => HostStatus::Up,
                 'down' => HostStatus::Down,
                 'disabled' => HostStatus::Disabled,
+                'unusual' => HostStatus::Unusual,
                 default => HostStatus::Unknown,
             },
             $device['tags'] ?? [],

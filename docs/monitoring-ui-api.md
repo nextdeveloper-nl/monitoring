@@ -69,7 +69,7 @@ Suggested navigation: **Overview**, **Hosts** (list and detail), **Alerts**, **N
 
 Build from two calls, both polled every 30 seconds:
 
-- `GET /hosts`: count hosts by `status.availability` (`up`, `down`, `unknown`, `unmonitored`, `disabled`).
+- `GET /hosts`: count hosts by `status.availability` (`up`, `down`, `unusual`, `unknown`, `unmonitored`, `disabled`).
 - `GET /alerts?status=active`: the open and acknowledged alerts, newest first.
 
 Show: hosts up/down tiles, open alert count by severity, list of the latest alerts, and hosts that are down.
@@ -78,7 +78,7 @@ An account that has never used monitoring has no hosts: show an empty state with
 
 ### 3.2 Hosts list
 
-`GET /hosts` with optional filters `type`, `site_id`, `parent_id`, `availability` (`up|down|unknown|unmonitored|disabled`).
+`GET /hosts` with optional filters `type`, `site_id`, `parent_id`, `availability` (`up|down|unusual|unknown|unmonitored|disabled`).
 
 Host object:
 
@@ -102,7 +102,7 @@ Host object:
 }
 ```
 
-- `status.availability`: `up`, `down`, `unknown` (no result yet), `unmonitored` (no host check), `disabled` (host check switched off). Map to colours: up green, down red, unknown grey, unmonitored grey with a hint "add a check", disabled grey.
+- `status.availability`: `up`, `down`, `unusual` (the check works and no fixed threshold is breached, but a Whoopsy! band is: the site works, not as usual; show amber, incident rule_id `whoopsy`), `unknown` (no result yet), `unmonitored` (no host check), `disabled` (host check switched off). Map to colours: up green, down red, unknown grey, unmonitored grey with a hint "add a check", disabled grey.
 - `status.health`: `ok`, `warning`, `critical`: the worst open alert on the host. Use it for a secondary badge.
 - `status.since` is when availability last changed (null if unmonitored). Show "down for 12 min".
 - `status.open_incidents`: number of open alerts on the host.
