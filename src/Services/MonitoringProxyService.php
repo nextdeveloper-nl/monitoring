@@ -289,6 +289,8 @@ class MonitoringProxyService
                 'description' => $m['description'] ?? null,
             ])->values()->all(),
             'credential_types' => $p['credential_types'] ?? [],
+            // advisory: true = the plugin needs a credential to work (checks without one run UNKNOWN); false = optional or none
+            'credentials_required' => (bool) ($p['credentials_required'] ?? false),
             // the metric Whoopsy! watches by default; null: Whoopsy! is not available for this plugin (collectors, or no default metric)
             'whoopsy_metric' => $p['whoopsy_metric'] ?? null,
         ])->values()->all();
