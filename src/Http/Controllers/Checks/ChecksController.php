@@ -104,4 +104,10 @@ class ChecksController extends AbstractMonitoringController
             return ['data' => ['queued' => true]];
         }, 202);
     }
+
+    /** Push checks: a new ingest token, shown once in the response. The old token stops at once. */
+    public function rotateToken(string $checkId): JsonResponse
+    {
+        return $this->respond(fn () => ['data' => $this->service->rotateCheckToken($checkId)]);
+    }
 }

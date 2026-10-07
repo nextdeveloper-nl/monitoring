@@ -56,6 +56,7 @@ Route::prefix('monitoring')->group(
                 Route::post('{check_id}/whoopsy/reset', 'Whoopsy\WhoopsyController@reset');
                 Route::get('{check_id}/whoopsy/band', 'Whoopsy\WhoopsyController@band');
                 Route::post('{check_id}/run', 'Checks\ChecksController@run');
+                Route::post('{check_id}/rotate-token', 'Checks\ChecksController@rotateToken');
             }
         );
 

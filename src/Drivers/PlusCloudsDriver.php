@@ -20,6 +20,7 @@ use NextDeveloper\Monitoring\Contracts\ReportsUsage;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
 use NextDeveloper\Monitoring\Contracts\ManagesSites;
 use NextDeveloper\Monitoring\Contracts\ManagesWhoopsy;
+use NextDeveloper\Monitoring\Contracts\RotatesPushTokens;
 use NextDeveloper\Monitoring\DataTransferObjects\Alert;
 use NextDeveloper\Monitoring\DataTransferObjects\AlertRoute;
 use NextDeveloper\Monitoring\DataTransferObjects\Site;
@@ -50,12 +51,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects, SummarizesMetrics, ManagesWhoopsy
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects, SummarizesMetrics, ManagesWhoopsy, RotatesPushTokens
 {
     /** Set by actingAs(): the user whose role applies to tenant calls. Null = the platform, with full rights in the tenant. */
     protected ?string $actor = null;
 
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary', 'whoopsy'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary', 'whoopsy', 'push_tokens'];
 
     public function driverName(): string
     {
@@ -377,6 +378,12 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
     public function runCheckNow(string $tenantId, string $checkId): void
     {
         $this->request('POST', $this->path("checks/{$checkId}/run-now"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    /** Push checks: a new ingest token (shown once, in raw['push_token']); the old one stops at once. 409 not-push for a polled check. */
+    public function rotateCheckToken(string $tenantId, string $checkId): Check
+    {
+        return $this->toCheck($this->request('POST', $this->path("checks/{$checkId}/rotate-token"), [], [], $this->tenantHeaders($tenantId)));
     }
 
     /** Runs every enabled check once (server allows up to 60 s); stores nothing. */

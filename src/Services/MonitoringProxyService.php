@@ -12,6 +12,7 @@ use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
 use NextDeveloper\Monitoring\Contracts\ListsCheckObjects;
 use NextDeveloper\Monitoring\Contracts\ListsPlugins;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
+use NextDeveloper\Monitoring\Contracts\RotatesPushTokens;
 use NextDeveloper\Monitoring\Contracts\ManagesCredentials;
 use NextDeveloper\Monitoring\Contracts\ManagesMembers;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
@@ -76,7 +77,7 @@ class MonitoringProxyService
             'name' => $tenant->name,
             'status' => $tenant->status instanceof \BackedEnum ? $tenant->status->value : $tenant->status,
             'capabilities' => array_values(array_filter(
-                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors', 'summary', 'whoopsy'],
+                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors', 'summary', 'whoopsy', 'push_tokens'],
                 fn ($c) => $this->manager->forTenant($tenant)->supports($c),
             )),
         ];
@@ -206,6 +207,21 @@ class MonitoringProxyService
         [$driver, $id] = $this->context();
 
         $this->checksDriver($driver)->runCheckNow($id, $checkId);
+    }
+
+    /**
+     * Push checks: issue a new ingest token. The response is the check including `push_token`, shown only this once;
+     * the old token stops working at once. 409 for a polled check.
+     */
+    public function rotateCheckToken(string $checkId): array
+    {
+        [$driver, $id] = $this->context();
+
+        if (! $driver instanceof RotatesPushTokens) {
+            throw UnsupportedOperation::for($driver->driverName(), 'push_tokens');
+        }
+
+        return $this->check($driver->rotateCheckToken($id, $checkId));
     }
 
     // ---- alerts (incidents) ----
@@ -1108,7 +1124,12 @@ class MonitoringProxyService
             'unknown_is_critical' => $c->raw['unknown_is_critical'] ?? false,
             // role => credential id, e.g. {"auth": "..."}; the secrets themselves are never returned
             'credentials' => (object) ($c->raw['credentials'] ?? []),
-        ];
+            // push checks (plugin push.http): where devices send data (ingest_url, token_prefix, last_push_at); null for polled checks
+            'push' => $c->raw['push'] ?? null,
+        ] + (isset($c->raw['push_token']) ? [
+            // the ingest token: only in the response that creates a push check or rotates its token, never again; never logged
+            'push_token' => $c->raw['push_token'],
+        ] : []);
     }
 
     private function alert(Alert $a): array

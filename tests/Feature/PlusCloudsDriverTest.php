@@ -549,6 +549,18 @@ class PlusCloudsDriverTest extends TestCase
         $this->assertSame(93.6, $band['points'][1]['upper']);
     }
 
+    public function test_rotating_a_push_token_posts_and_returns_the_token_once(): void
+    {
+        $this->fake(['*' => Http::response(['id' => 'c1', 'device_id' => 'h1', 'name' => 'push', 'plugin' => 'push.http', 'push' => ['ingest_path' => '/ingest/v1/c1', 'token_prefix' => 'mpush_ab12cd34'], 'push_token' => 'mpush_ab12cd34_secret'])]);
+
+        $check = $this->driver->rotateCheckToken(self::TENANT, 'c1');
+
+        $this->assertSame('POST', $this->sent()->method());
+        $this->assertStringEndsWith('/v1/checks/c1/rotate-token', $this->sent()->url());
+        $this->assertSame('mpush_ab12cd34_secret', $check->raw['push_token']);
+        $this->assertTrue($this->driver->supports('push_tokens'));
+    }
+
     public function test_problem_response_becomes_api_request_failed_with_body(): void
     {
         $this->fake(['*' => Http::response(['type' => 'https://monitor.plusclouds.com/problems/tenant-suspended', 'status' => 403], 403)]);
