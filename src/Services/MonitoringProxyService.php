@@ -12,6 +12,7 @@ use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
 use NextDeveloper\Monitoring\Contracts\ListsCheckObjects;
 use NextDeveloper\Monitoring\Contracts\ListsPlugins;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
+use NextDeveloper\Monitoring\Contracts\ManagesMqtt;
 use NextDeveloper\Monitoring\Contracts\RotatesPushTokens;
 use NextDeveloper\Monitoring\Contracts\ManagesCredentials;
 use NextDeveloper\Monitoring\Contracts\ManagesMembers;
@@ -77,7 +78,7 @@ class MonitoringProxyService
             'name' => $tenant->name,
             'status' => $tenant->status instanceof \BackedEnum ? $tenant->status->value : $tenant->status,
             'capabilities' => array_values(array_filter(
-                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors', 'summary', 'whoopsy', 'push_tokens'],
+                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors', 'summary', 'whoopsy', 'push_tokens', 'mqtt'],
                 fn ($c) => $this->manager->forTenant($tenant)->supports($c),
             )),
         ];
@@ -222,6 +223,103 @@ class MonitoringProxyService
         }
 
         return $this->check($driver->rotateCheckToken($id, $checkId));
+    }
+
+    // ---- MQTT ingest (devices send data to the monitoring service's MQTT broker) ----
+
+    public function listMqttCredentials(): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->mqttDriver($driver)->listMqttCredentials($id)->map(fn (array $c) => $this->mqttCredential($c))->values()->all();
+    }
+
+    public function getMqttCredential(string $credentialId): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->mqttCredential($this->mqttDriver($driver)->getMqttCredential($id, $credentialId));
+    }
+
+    /** $data: name, kind (device|shared), username?, password?, device_key?, profile?, allow_plain?, auto_register?, enabled?. The response carries `password` once. */
+    public function createMqttCredential(array $data): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->mqttCredential($this->mqttDriver($driver)->createMqttCredential($id, $data));
+    }
+
+    /** $data: name, allow_plain, auto_register, enabled. */
+    public function updateMqttCredential(string $credentialId, array $data): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->mqttCredential($this->mqttDriver($driver)->updateMqttCredential($id, $credentialId, $data));
+    }
+
+    public function deleteMqttCredential(string $credentialId): void
+    {
+        [$driver, $id] = $this->context();
+
+        $this->mqttDriver($driver)->deleteMqttCredential($id, $credentialId);
+    }
+
+    /** New password (generated when none is given); the old one stops at once. The response carries `password` once. */
+    public function rotateMqttCredential(string $credentialId, ?string $password = null): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->mqttCredential($this->mqttDriver($driver)->rotateMqttCredential($id, $credentialId, $password));
+    }
+
+    /** The message profiles (fixlean-esp, json). */
+    public function mqttProfiles(): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->mqttDriver($driver)->listMqttProfiles($id)->map(fn (array $p) => [
+            'name' => $p['name'] ?? null,
+            'description' => $p['description'] ?? null,
+        ])->values()->all();
+    }
+
+    /** Device keys whose messages were dropped (auto-registration off, or the account is at its device limit). */
+    public function mqttUnregistered(): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->mqttDriver($driver)->listMqttUnregistered($id)->map(fn (array $u) => [
+            'device_key' => $u['device_key'] ?? null,
+            'credential_id' => $u['credential_id'] ?? null,
+            'reason' => $u['reason'] ?? null,
+            'messages' => $u['messages'] ?? null,
+            'first_seen' => $u['first_seen'] ?? null,
+            'last_seen' => $u['last_seen'] ?? null,
+        ])->values()->all();
+    }
+
+    /** Pre-registers a device key on a host. $data: device_key, profile?. 409 when already bound. */
+    public function bindHostMqtt(string $hostId, array $data): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->hostMqtt($this->mqttDriver($driver)->bindHostMqtt($id, $hostId, $data));
+    }
+
+    /** 404 when the host is not an MQTT device. */
+    public function getHostMqtt(string $hostId): array
+    {
+        [$driver, $id] = $this->context();
+
+        return $this->hostMqtt($this->mqttDriver($driver)->getHostMqtt($id, $hostId));
+    }
+
+    /** Also removes the device's two checks. */
+    public function unbindHostMqtt(string $hostId): void
+    {
+        [$driver, $id] = $this->context();
+
+        $this->mqttDriver($driver)->unbindHostMqtt($id, $hostId);
     }
 
     // ---- alerts (incidents) ----
@@ -1081,6 +1179,11 @@ class MonitoringProxyService
         return ManagesMembers::ROLE_READ_ONLY;
     }
 
+    private function mqttDriver($driver): ManagesMqtt
+    {
+        return $driver instanceof ManagesMqtt ? $driver : throw UnsupportedOperation::for($driver->driverName(), 'mqtt');
+    }
+
     private function checksDriver($driver): ManagesChecks
     {
         return $driver instanceof ManagesChecks ? $driver : throw UnsupportedOperation::for($driver->driverName(), 'checks');
@@ -1111,6 +1214,38 @@ class MonitoringProxyService
             // it does not count toward the host limit, is not billed, and disappears 7 days after the collector stops
             // reporting it (gone_at) or with the collector check.
             'discovered' => $h->raw['discovered'] ?? null,
+        ];
+    }
+
+    /** `password` is only in the response that creates or rotates a credential: shown once, never logged. */
+    private function mqttCredential(array $c): array
+    {
+        return [
+            'id' => $c['id'] ?? null,
+            'name' => $c['name'] ?? null,
+            'username' => $c['username'] ?? null,
+            'kind' => $c['kind'] ?? null,
+            'device_key' => $c['device_key'] ?? null,
+            'profile' => $c['profile'] ?? null,
+            'allow_plain' => (bool) ($c['allow_plain'] ?? false),
+            'auto_register' => (bool) ($c['auto_register'] ?? true),
+            'enabled' => (bool) ($c['enabled'] ?? true),
+            'created_at' => $c['created_at'] ?? null,
+            'updated_at' => $c['updated_at'] ?? null,
+            'last_used_at' => $c['last_used_at'] ?? null,
+        ] + (isset($c['password']) ? ['password' => $c['password']] : []);
+    }
+
+    private function hostMqtt(array $m): array
+    {
+        return [
+            'host_id' => $m['device_id'] ?? null,
+            'device_key' => $m['device_key'] ?? null,
+            'data_check_id' => $m['data_check_id'] ?? null,
+            'connection_check_id' => $m['connection_check_id'] ?? null,
+            'created_at' => $m['created_at'] ?? null,
+            // the live broker session (node_id, client_id, remote, keepalive, connected_at); null when not connected
+            'session' => $m['session'] ?? null,
         ];
     }
 

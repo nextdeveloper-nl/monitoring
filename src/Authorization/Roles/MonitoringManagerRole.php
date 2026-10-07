@@ -79,6 +79,14 @@ class MonitoringManagerRole extends AbstractRole implements IAuthorizationRole
             'monitoring_credentials:create',
             'monitoring_credentials:update',
             'monitoring_credentials:delete',
+
+            // MQTT ingest credentials (devices send data to the monitoring service's broker). Passwords are shown once.
+            'monitoring_mqtt_profiles:read',
+            'monitoring_mqtt_unregistered:read',
+            'monitoring_mqtt_credentials:read',
+            'monitoring_mqtt_credentials:create',
+            'monitoring_mqtt_credentials:update',
+            'monitoring_mqtt_credentials:delete',
         ];
     }
 

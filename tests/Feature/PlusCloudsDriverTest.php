@@ -561,6 +561,29 @@ class PlusCloudsDriverTest extends TestCase
         $this->assertTrue($this->driver->supports('push_tokens'));
     }
 
+    public function test_mqtt_credentials_profiles_and_device_binding_call_the_ingest_paths(): void
+    {
+        $this->fake(['*' => Http::response(['id' => 'm1', 'name' => 'esp', 'username' => 'u1', 'kind' => 'device', 'password' => 'once-only-pw'], 201)]);
+        $created = $this->driver->createMqttCredential(self::TENANT, ['name' => 'esp', 'kind' => 'device', 'device_key' => '246F28AABBCC']);
+        $this->assertSame('POST', $this->sent()->method());
+        $this->assertStringEndsWith('/v1/ingest/mqtt-credentials', $this->sent()->url());
+        $this->assertSame('once-only-pw', $created['password']);
+
+        $this->fake(['*' => Http::response(['id' => 'm1', 'password' => 'new-pw-12345'])]);
+        $this->driver->rotateMqttCredential(self::TENANT, 'm1', 'new-pw-12345');
+        $this->assertStringEndsWith('/v1/ingest/mqtt-credentials/m1/rotate', $this->sent()->url());
+        $this->assertSame('new-pw-12345', $this->sent()['password']);
+
+        $this->fake(['*' => Http::response(['items' => [['name' => 'json', 'description' => 'x']]])]);
+        $this->assertSame('json', $this->driver->listMqttProfiles(self::TENANT)[0]['name']);
+        $this->assertStringEndsWith('/v1/ingest/profiles', $this->sent()->url());
+
+        $this->fake(['*' => Http::response(['device_id' => 'h1', 'device_key' => 'K', 'data_check_id' => 'c1', 'connection_check_id' => null, 'session' => null])]);
+        $this->driver->bindHostMqtt(self::TENANT, 'h1', ['device_key' => 'K']);
+        $this->assertStringEndsWith('/v1/devices/h1/mqtt', $this->sent()->url());
+        $this->assertTrue($this->driver->supports('mqtt'));
+    }
+
     public function test_problem_response_becomes_api_request_failed_with_body(): void
     {
         $this->fake(['*' => Http::response(['type' => 'https://monitor.plusclouds.com/problems/tenant-suspended', 'status' => 403], 403)]);

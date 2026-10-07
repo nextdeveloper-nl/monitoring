@@ -20,6 +20,7 @@ use NextDeveloper\Monitoring\Contracts\ReportsUsage;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
 use NextDeveloper\Monitoring\Contracts\ManagesSites;
 use NextDeveloper\Monitoring\Contracts\ManagesWhoopsy;
+use NextDeveloper\Monitoring\Contracts\ManagesMqtt;
 use NextDeveloper\Monitoring\Contracts\RotatesPushTokens;
 use NextDeveloper\Monitoring\DataTransferObjects\Alert;
 use NextDeveloper\Monitoring\DataTransferObjects\AlertRoute;
@@ -51,12 +52,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects, SummarizesMetrics, ManagesWhoopsy, RotatesPushTokens
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects, SummarizesMetrics, ManagesWhoopsy, RotatesPushTokens, ManagesMqtt
 {
     /** Set by actingAs(): the user whose role applies to tenant calls. Null = the platform, with full rights in the tenant. */
     protected ?string $actor = null;
 
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary', 'whoopsy', 'push_tokens'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary', 'whoopsy', 'push_tokens', 'mqtt'];
 
     public function driverName(): string
     {
@@ -829,6 +830,64 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
     protected function toCredential(array $c): Credential
     {
         return new Credential($c['id'] ?? null, (string) ($c['name'] ?? ''), (string) ($c['type'] ?? ''), $c['fields'] ?? [], $c['secrets_set'] ?? [], array_diff_key($c, ['fields' => 1]));
+    }
+
+    // ---- MQTT ingest (embedded broker): credentials, profiles, unregistered devices, device binding ----
+
+    public function listMqttCredentials(string $tenantId): Collection
+    {
+        return $this->listAll($tenantId, 'ingest/mqtt-credentials', fn (array $c) => $c);
+    }
+
+    public function getMqttCredential(string $tenantId, string $credentialId): array
+    {
+        return $this->request('GET', $this->path("ingest/mqtt-credentials/{$credentialId}"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    /** The response carries `password` once when the credential is created. */
+    public function createMqttCredential(string $tenantId, array $body): array
+    {
+        return $this->request('POST', $this->path('ingest/mqtt-credentials'), $body, [], $this->tenantHeaders($tenantId));
+    }
+
+    public function updateMqttCredential(string $tenantId, string $credentialId, array $body): array
+    {
+        return $this->request('PATCH', $this->path("ingest/mqtt-credentials/{$credentialId}"), $body, [], $this->tenantHeaders($tenantId));
+    }
+
+    public function deleteMqttCredential(string $tenantId, string $credentialId): void
+    {
+        $this->request('DELETE', $this->path("ingest/mqtt-credentials/{$credentialId}"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    public function rotateMqttCredential(string $tenantId, string $credentialId, ?string $password = null): array
+    {
+        return $this->request('POST', $this->path("ingest/mqtt-credentials/{$credentialId}/rotate"), array_filter(['password' => $password]), [], $this->tenantHeaders($tenantId));
+    }
+
+    public function listMqttProfiles(string $tenantId): Collection
+    {
+        return collect($this->request('GET', $this->path('ingest/profiles'), [], [], $this->tenantHeaders($tenantId))['items'] ?? [])->values();
+    }
+
+    public function listMqttUnregistered(string $tenantId): Collection
+    {
+        return collect($this->request('GET', $this->path('ingest/unregistered'), [], [], $this->tenantHeaders($tenantId))['items'] ?? [])->values();
+    }
+
+    public function bindHostMqtt(string $tenantId, string $hostId, array $body): array
+    {
+        return $this->request('POST', $this->path("devices/{$hostId}/mqtt"), $body, [], $this->tenantHeaders($tenantId));
+    }
+
+    public function getHostMqtt(string $tenantId, string $hostId): array
+    {
+        return $this->request('GET', $this->path("devices/{$hostId}/mqtt"), [], [], $this->tenantHeaders($tenantId));
+    }
+
+    public function unbindHostMqtt(string $tenantId, string $hostId): void
+    {
+        $this->request('DELETE', $this->path("devices/{$hostId}/mqtt"), [], [], $this->tenantHeaders($tenantId));
     }
 
     public function listCheckObjects(string $tenantId, string $checkId, ?string $status = null, bool $includeGone = true): Collection

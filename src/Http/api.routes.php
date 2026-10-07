@@ -22,6 +22,21 @@ Route::prefix('monitoring')->group(
             }
         );
 
+        // MQTT ingest: credentials devices connect with, message profiles, dropped (unregistered) device keys
+        Route::get('mqtt-profiles', 'Mqtt\MqttController@profiles');
+        Route::get('mqtt-unregistered', 'Mqtt\MqttController@unregistered');
+        Route::prefix('mqtt-credentials')->group(
+            function () {
+                Route::get('/', 'Mqtt\MqttController@index');
+                Route::post('/', 'Mqtt\MqttController@store');
+
+                Route::get('{credential_id}', 'Mqtt\MqttController@show');
+                Route::patch('{credential_id}', 'Mqtt\MqttController@update');
+                Route::delete('{credential_id}', 'Mqtt\MqttController@destroy');
+                Route::post('{credential_id}/rotate', 'Mqtt\MqttController@rotate');
+            }
+        );
+
         Route::prefix('hosts')->group(
             function () {
                 Route::get('/', 'Hosts\HostsController@index');
@@ -31,6 +46,9 @@ Route::prefix('monitoring')->group(
                 Route::patch('{host_id}', 'Hosts\HostsController@update');
                 Route::delete('{host_id}', 'Hosts\HostsController@destroy');
                 Route::post('{host_id}/test', 'Hosts\HostsController@test');
+                Route::get('{host_id}/mqtt', 'Mqtt\MqttController@showHost');
+                Route::post('{host_id}/mqtt', 'Mqtt\MqttController@bindHost');
+                Route::delete('{host_id}/mqtt', 'Mqtt\MqttController@unbindHost');
 
                 Route::get('{host_id}/checks', 'Checks\ChecksController@forHost');
                 Route::post('{host_id}/checks', 'Checks\ChecksController@storeForHost');
