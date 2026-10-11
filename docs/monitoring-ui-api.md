@@ -330,7 +330,7 @@ Rules for the chart:
 - Data exists only from the moment a check starts. Retention is set by the platform operator and can change, so do not promise a history length in the UI. Long ranges are served from coarser rollups (the `resolution` field says `raw`, `5m` or `1h`), so they look smoother than short ranges.
 - Good default graphs: response time for HTTP (`total_ms`), round-trip time and `packet_loss_percent` for ping.
 
-**Statistics for the whole window.** `GET /hosts/{host_id}/metrics/summary` returns one set of numbers per series for a range, for the "Min, Avg, P50, P95, P99, Max" row under a graph. Parameters: `name[]` (repeat it: one request per check carries all its metrics), `from`, `to` (default: the last hour), `check_id`, `object`, `percentile[]` (extra percentiles such as `p90` and `p99.9`, up to 10) and `window` (1 to 10000: also give the statistics of the last N samples).
+**Statistics for the whole window.** `GET /hosts/{host_id}/metrics/summary` returns one set of numbers per series for a range, for the "Min, Avg, P50, P95, P99, Max" row under a graph. Parameters: `name[]` (repeat it, up to 50 names: one request per check carries all its metrics), `from`, `to` (default: the last hour), `check_id`, `object`, `percentile[]` (extra percentiles such as `p90` and `p99.9`, up to 10) and `window` (1 to 10000: also give the statistics of the last N samples).
 
 ```json
 {"data": {

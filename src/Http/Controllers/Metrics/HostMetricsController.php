@@ -11,7 +11,7 @@ class HostMetricsController extends AbstractMonitoringController
     public function index(Request $request, string $hostId): JsonResponse
     {
         $params = $request->validate([
-            'name' => 'sometimes|array|max:20',
+            'name' => 'sometimes|array|max:50',
             'name.*' => 'string|max:100',
             'from' => 'sometimes|date',
             'to' => 'sometimes|date|after:from',
@@ -30,7 +30,7 @@ class HostMetricsController extends AbstractMonitoringController
     public function summary(Request $request, string $hostId): JsonResponse
     {
         $params = $request->validate([
-            'name' => 'sometimes|array|max:20',
+            'name' => 'sometimes|array|max:50',
             'name.*' => 'string|max:100',
             'from' => 'sometimes|date',
             'to' => 'sometimes|date|after:from',
@@ -47,7 +47,7 @@ class HostMetricsController extends AbstractMonitoringController
     public function series(Request $request, string $hostId): JsonResponse
     {
         $params = $request->validate([
-            'name' => 'sometimes|array|max:20',
+            'name' => 'sometimes|array|max:50',
             'name.*' => 'string|max:100',
             'check_id' => 'sometimes|string',
             'object' => 'sometimes|string|max:500',
