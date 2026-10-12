@@ -18,6 +18,16 @@ return [
      */
     'admin_roles' => ['monitoring-admin', 'system-admin'],
 
+    /*
+     * A platform channel every account gets, so the platform receives all of its monitoring notifications and can act on
+     * them (the receiver lives in the host application). Off unless a URL is set. `url` may contain {account_id}, which is
+     * replaced with the account's id (the external tenant id), for example
+     * https://apiv4.plusclouds.com/public/monitoring/notifications/{account_id}
+     */
+    'default_channel' => [
+        'url' => env('MONITORING_DEFAULT_CHANNEL_URL'),
+    ],
+
     'tables' => [
         'servers' => 'monitoring_servers',
         'tenants' => 'monitoring_tenants',

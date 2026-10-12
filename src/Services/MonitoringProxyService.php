@@ -247,7 +247,8 @@ class MonitoringProxyService
         $r = $driver->deviceNotifications($id, $hostId, $filters);
 
         return [
-            'routes' => collect($r['routes'])->map(fn (array $x) => [
+            // the platform's own channel is not the customer's business
+            'routes' => collect($r['routes'])->reject(fn (array $x) => $this->isDefaultChannel($x['route_external'] ?? null, $x['endpoint']['external'] ?? null))->map(fn (array $x) => [
                 'route_id' => $x['route_id'] ?? null,
                 'name' => $x['name'] ?? null,
                 'position' => $x['position'] ?? null,
@@ -270,7 +271,7 @@ class MonitoringProxyService
                 'is_channel' => ($x['route_external']['type'] ?? null) === self::CHANNEL_ROUTE_TYPE
                     || ($x['endpoint']['external']['type'] ?? null) === self::CHANNEL_TYPE,
             ])->values()->all(),
-            'deliveries' => collect($r['items'])->map(fn (array $d) => [
+            'deliveries' => collect($r['items'])->reject(fn (array $d) => $this->isDefaultChannel($d['route_external'] ?? null, $d['endpoint_external'] ?? null))->map(fn (array $d) => [
                 'id' => $d['id'] ?? null,
                 'event_type' => $d['event_type'] ?? null,
                 'incident_id' => $d['incident_id'] ?? null,
@@ -1169,6 +1170,12 @@ class MonitoringProxyService
         ], fn ($v) => $v !== null && $v !== []);
     }
 
+    /** True for the platform's own channel (DefaultChannelService), judged by the external type of its route or webhook. */
+    private function isDefaultChannel(?array $route, ?array $endpoint): bool
+    {
+        return ($route['type'] ?? null) === DefaultChannelService::ROUTE_TYPE || ($endpoint['type'] ?? null) === DefaultChannelService::WEBHOOK_TYPE;
+    }
+
     private function findChannelWebhook(ManagesNotifications $notifications, string $tenantId, string $channelId): Webhook
     {
         $webhook = $notifications->listWebhooks($tenantId)
@@ -1253,6 +1260,9 @@ class MonitoringProxyService
             $this->emptyRestoredTenant($tenant, $driver);
         }
 
+        // The platform's own channel (see DefaultChannelService); once a tenant has it this costs nothing.
+        app(DefaultChannelService::class)->ensure($tenant, $driver);
+
         Cache::put($cacheKey, true, now()->addMinutes(5));
 
         return $tenant;
@@ -1299,6 +1309,9 @@ class MonitoringProxyService
     private function emptyRestoredTenant(MonitoringTenant $tenant, $driver): void
     {
         app(TenantRecoveryService::class)->empty($driver, $tenant->external_tenant_id);
+
+        // Emptying removed the platform's channel too: it is created again right after.
+        app(DefaultChannelService::class)->forget($tenant);
 
         $meta = $tenant->meta ?? [];
         unset($meta['wipe_pending']);
