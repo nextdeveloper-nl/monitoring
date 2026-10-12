@@ -12,6 +12,7 @@ use NextDeveloper\Monitoring\Contracts\ListsMetricSeries;
 use NextDeveloper\Monitoring\Contracts\ListsCheckObjects;
 use NextDeveloper\Monitoring\Contracts\ListsPlugins;
 use NextDeveloper\Monitoring\Contracts\ManagesChecks;
+use NextDeveloper\Monitoring\Contracts\ListsDeviceNotifications;
 use NextDeveloper\Monitoring\Contracts\ManagesMqtt;
 use NextDeveloper\Monitoring\Contracts\ResolvesVirtualMachines;
 use NextDeveloper\Monitoring\Contracts\RotatesPushTokens;
@@ -79,7 +80,7 @@ class MonitoringProxyService
             'name' => $tenant->name,
             'status' => $tenant->status instanceof \BackedEnum ? $tenant->status->value : $tenant->status,
             'capabilities' => array_values(array_filter(
-                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors', 'summary', 'whoopsy', 'push_tokens', 'mqtt'],
+                ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'metrics', 'notifications', 'plugins', 'credentials', 'collectors', 'summary', 'whoopsy', 'push_tokens', 'mqtt', 'device_notifications'],
                 fn ($c) => $this->manager->forTenant($tenant)->supports($c),
             )),
         ];
@@ -224,6 +225,87 @@ class MonitoringProxyService
         }
 
         return $this->check($driver->rotateCheckToken($id, $checkId));
+    }
+
+    // ---- Notifications of a host: which channels would fire for it, and what was delivered ----
+
+    /**
+     * For the host's notification page. `routes` (first page only) lists the channel routes that apply to the host, with
+     * `would_fire` and, when false, a `reason` (route_disabled, no_match, endpoint_disabled, shadowed, endpoint_failing),
+     * `matches_because` codes, the checks it matches and the channel's delivery health. `items` are the host's recent
+     * deliveries with the exact payload sent. `would_fire` is a prediction: maintenance windows and suppression at incident
+     * time are not part of it. $filters: status, event_type, limit (1-100, default 20), cursor.
+     */
+    public function hostNotifications(string $hostId, array $filters = []): array
+    {
+        [$driver, $id] = $this->context();
+
+        if (! $driver instanceof ListsDeviceNotifications) {
+            throw UnsupportedOperation::for($driver->driverName(), 'device_notifications');
+        }
+
+        $r = $driver->deviceNotifications($id, $hostId, $filters);
+
+        return [
+            'routes' => collect($r['routes'])->map(fn (array $x) => [
+                'route_id' => $x['route_id'] ?? null,
+                'name' => $x['name'] ?? null,
+                'position' => $x['position'] ?? null,
+                'enabled' => (bool) ($x['enabled'] ?? false),
+                'match' => (object) ($x['match'] ?? []),
+                // the channel this route sends to; its id is the channel_id of /monitoring/channels
+                'channel' => isset($x['endpoint']) ? [
+                    'channel_id' => $x['endpoint']['id'] ?? null,
+                    'name' => $x['endpoint']['name'] ?? null,
+                    'enabled' => (bool) ($x['endpoint']['enabled'] ?? false),
+                    'disabled_reason' => $x['endpoint']['disabled_reason'] ?? null,
+                ] : null,
+                'matches_because' => $x['matches_because'] ?? [],
+                'matched_checks' => $x['matched_checks'] ?? [],
+                // delivery health of the channel over all hosts of the account
+                'health' => (object) ($x['health'] ?? []),
+                'would_fire' => (bool) ($x['would_fire'] ?? false),
+                'reason' => $x['reason'] ?? null,
+            ])->values()->all(),
+            'deliveries' => collect($r['items'])->map(fn (array $d) => [
+                'id' => $d['id'] ?? null,
+                'event_type' => $d['event_type'] ?? null,
+                'incident_id' => $d['incident_id'] ?? null,
+                'check_id' => $d['check_id'] ?? null,
+                'route_id' => $d['route_id'] ?? null,
+                'route_name' => $d['route_name'] ?? null,
+                'channel_id' => $d['endpoint_id'] ?? null,
+                'channel_name' => $d['endpoint_name'] ?? null,
+                'status' => $d['status'] ?? null,
+                'attempts' => $d['attempts'] ?? null,
+                'last_status_code' => $d['last_status_code'] ?? null,
+                'last_error' => $d['last_error'] ?? null,
+                'last_attempt_at' => $d['last_attempt_at'] ?? null,
+                'delivered_at' => $d['delivered_at'] ?? null,
+                'created_at' => $d['created_at'] ?? null,
+                // the exact body that was sent (it holds no secrets; signatures are headers and are not stored)
+                'payload' => $d['payload'] ?? null,
+            ])->values()->all(),
+            'next_cursor' => $r['next_cursor'],
+        ];
+    }
+
+    /** The events that can be sent (type, scope incident|tenant|test, trigger, example payload), the fields a route can match on, and the grouping fields. Static. */
+    public function notificationCatalog(): array
+    {
+        [$driver, $id] = $this->context();
+
+        if (! $driver instanceof ListsDeviceNotifications) {
+            throw UnsupportedOperation::for($driver->driverName(), 'device_notifications');
+        }
+
+        $c = $driver->notificationCatalog($id);
+
+        return [
+            'events' => $c['events'] ?? [],
+            'match_fields' => $c['match_fields'] ?? [],
+            'group_by_fields' => $c['group_by_fields'] ?? [],
+        ];
     }
 
     // ---- MQTT ingest (devices send data to the monitoring service's MQTT broker) ----

@@ -584,6 +584,21 @@ class PlusCloudsDriverTest extends TestCase
         $this->assertTrue($this->driver->supports('mqtt'));
     }
 
+    public function test_device_notifications_and_catalog_use_the_device_paths(): void
+    {
+        $this->fake(['*' => Http::response(['routes' => [['route_id' => 'r1', 'would_fire' => true]], 'items' => [['id' => 'd1', 'payload' => ['x' => 1]]], 'next_cursor' => 'c2'])]);
+        $n = $this->driver->deviceNotifications(self::TENANT, 'h1', ['status' => 'failed', 'limit' => 5]);
+        $this->assertStringContainsString('/v1/devices/h1/notifications?', $this->sent()->url());
+        $this->assertStringContainsString('status=failed', $this->sent()->url());
+        $this->assertSame('r1', $n['routes'][0]['route_id']);
+        $this->assertSame('c2', $n['next_cursor']);
+
+        $this->fake(['*' => Http::response(['events' => [['type' => 'incident.opened']], 'match_fields' => ['severity']])]);
+        $this->assertSame('incident.opened', $this->driver->notificationCatalog(self::TENANT)['events'][0]['type']);
+        $this->assertStringEndsWith('/v1/notification-catalog', $this->sent()->url());
+        $this->assertTrue($this->driver->supports('device_notifications'));
+    }
+
     public function test_problem_response_becomes_api_request_failed_with_body(): void
     {
         $this->fake(['*' => Http::response(['type' => 'https://monitor.plusclouds.com/problems/tenant-suspended', 'status' => 403], 403)]);

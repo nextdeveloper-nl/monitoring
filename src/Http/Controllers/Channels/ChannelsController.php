@@ -153,4 +153,10 @@ class ChannelsController extends AbstractMonitoringController
             return ['data' => ['queued' => true]];
         }, 202);
     }
+
+    /** The events that can be sent, what triggers them and an example payload; static. */
+    public function catalog(): JsonResponse
+    {
+        return $this->respond(fn () => ['data' => $this->service->notificationCatalog()]);
+    }
 }

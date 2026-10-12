@@ -556,6 +556,16 @@ Available on checks whose plugin has a `whoopsy_metric` in `GET /plugins` (`http
 - Push checks in the check object: `push` is `null` for polled checks; for a push check it is `{"ingest_path", "ingest_url" (null when the service has no public URL), "token_prefix", "token_created_at", "last_push_at"}`. **`push_token` is returned only in the response to `POST /hosts/{host_id}/checks` that creates a push check and in the response to the rotate call, once and never again** (format `mpush_<8>_<43 base62>`): show it to the user at once, with a copy button and a warning that it cannot be shown again. Never log it.
 - `POST /checks/{check_id}/rotate-token` (operator role): returns the check with a new `push_token`; the old token stops at once. 409 `not-push` for a polled check.
 
+#### Notifications of a host (monitoring service with device notifications; check `GET /tenant` capabilities for `device_notifications`)
+
+Shows, per host, which notification channels would fire and what was delivered, so a customer can see whether their notification triggers work.
+
+- `GET /hosts/{host_id}/notifications` (all roles). Query: `status` (pending, delivered, failed, cancelled), `event_type`, `limit` (1 to 100, default 20), `cursor`. Response `data`: `{routes, deliveries, next_cursor}`. `routes` come on the first page only (empty when `cursor` is set).
+- `routes[]`: `{route_id, name, position, enabled, match, channel {channel_id, name, enabled, disabled_reason}, matches_because [], matched_checks [{check_id, name, plugin, severities}], health {last_attempt_at, last_status, last_status_code, last_error, failed_24h, failing}, would_fire, reason}`. `channel_id` is the `id` of `GET /channels`. `health` is the channel's health over all hosts of the account. `matches_because` codes look like `severity:critical`, `tag:rack=a12`, `device_type:server`, `all_incidents`.
+- Show each route as working or not: `would_fire` true is green. When false, `reason` says why: `no_match` (the route does not match this host), `route_disabled`, `endpoint_disabled` (the channel is switched off; see `channel.disabled_reason`), `shadowed` (an earlier route handles it first) or `endpoint_failing` (the channel keeps failing: show `health.last_error`). `would_fire` is a prediction: maintenance windows and suppression at incident time are not part of it, and suppressed incidents never notify.
+- `deliveries[]`: `{id, event_type, incident_id, check_id, route_id, route_name, channel_id, channel_name, status, attempts, last_status_code, last_error, last_attempt_at, delivered_at, created_at, payload}`. `payload` is the exact body sent (it holds no secrets). Cursor paging with `next_cursor`.
+- `GET /notification-catalog`: static list of what can be sent: `{events [{type, description, scope incident|tenant|test, default, trigger, example payload}], match_fields, group_by_fields}`. Use it to explain each trigger and to render example payloads.
+
 #### VM monitoring through the VM agent (monitoring service v0.12.0)
 
 Every VM's agent already publishes telemetry every 30 s. It is stored only for VMs the customer has switched monitoring on for ("Enable monitoring" on the VM page); nothing is monitored until then.

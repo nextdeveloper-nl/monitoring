@@ -59,6 +59,7 @@ class MonitoringUserRole extends AbstractRole implements IAuthorizationRole
             'monitoring_alerts:read',
             'monitoring_channels:read',
             'monitoring_sites:read',
+            'monitoring_notification_catalog:read',
         ];
     }
 

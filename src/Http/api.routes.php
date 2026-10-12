@@ -55,6 +55,7 @@ Route::prefix('monitoring')->group(
                 Route::patch('{host_id}', 'Hosts\HostsController@update');
                 Route::delete('{host_id}', 'Hosts\HostsController@destroy');
                 Route::post('{host_id}/test', 'Hosts\HostsController@test');
+                Route::get('{host_id}/notifications', 'Hosts\HostsController@notifications');
                 Route::get('{host_id}/mqtt', 'Mqtt\MqttController@showHost');
                 Route::post('{host_id}/mqtt', 'Mqtt\MqttController@bindHost');
                 Route::delete('{host_id}/mqtt', 'Mqtt\MqttController@unbindHost');
@@ -96,6 +97,7 @@ Route::prefix('monitoring')->group(
             }
         );
 
+        Route::get('notification-catalog', 'Channels\ChannelsController@catalog');
         Route::prefix('channels')->group(
             function () {
                 Route::get('/', 'Channels\ChannelsController@index');

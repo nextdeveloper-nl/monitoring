@@ -20,6 +20,7 @@ use NextDeveloper\Monitoring\Contracts\ReportsUsage;
 use NextDeveloper\Monitoring\Contracts\ManagesNotifications;
 use NextDeveloper\Monitoring\Contracts\ManagesSites;
 use NextDeveloper\Monitoring\Contracts\ManagesWhoopsy;
+use NextDeveloper\Monitoring\Contracts\ListsDeviceNotifications;
 use NextDeveloper\Monitoring\Contracts\ManagesMqtt;
 use NextDeveloper\Monitoring\Contracts\RotatesPushTokens;
 use NextDeveloper\Monitoring\DataTransferObjects\Alert;
@@ -52,12 +53,12 @@ use NextDeveloper\Monitoring\Enums\TenantStatus;
  * Supports tenants, hosts (devices), checks, alerts (incidents), sites, notifications (webhooks, alert routes) and stored check metrics (read).
  * Push throws UnsupportedOperation until the server ships them.
  */
-class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects, SummarizesMetrics, ManagesWhoopsy, RotatesPushTokens, ManagesMqtt
+class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesSites, ManagesNotifications, ListsMetricSeries, ReportsUsage, ManagesMembers, ListsPlugins, ChecksConnection, RestoresTenants, ManagesCredentials, ListsCheckObjects, SummarizesMetrics, ManagesWhoopsy, RotatesPushTokens, ManagesMqtt, ListsDeviceNotifications
 {
     /** Set by actingAs(): the user whose role applies to tenant calls. Null = the platform, with full rights in the tenant. */
     protected ?string $actor = null;
 
-    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary', 'whoopsy', 'push_tokens', 'mqtt'];
+    protected array $capabilities = ['tenants', 'hosts', 'checks', 'alerts', 'sites', 'notifications', 'metrics', 'usage', 'members', 'plugins', 'connection', 'restore', 'credentials', 'collectors', 'summary', 'whoopsy', 'push_tokens', 'mqtt', 'device_notifications'];
 
     public function driverName(): string
     {
@@ -830,6 +831,20 @@ class PlusCloudsDriver extends AbstractDriver implements ManagesChecks, ManagesS
     protected function toCredential(array $c): Credential
     {
         return new Credential($c['id'] ?? null, (string) ($c['name'] ?? ''), (string) ($c['type'] ?? ''), $c['fields'] ?? [], $c['secrets_set'] ?? [], array_diff_key($c, ['fields' => 1]));
+    }
+
+    // ---- Notifications seen from a device ----
+
+    public function deviceNotifications(string $tenantId, string $deviceId, array $filters = []): array
+    {
+        $r = $this->request('GET', $this->path("devices/{$deviceId}/notifications"), [], $this->query($filters), $this->tenantHeaders($tenantId));
+
+        return ['routes' => $r['routes'] ?? [], 'items' => $r['items'] ?? [], 'next_cursor' => $r['next_cursor'] ?? null];
+    }
+
+    public function notificationCatalog(string $tenantId): array
+    {
+        return $this->request('GET', $this->path('notification-catalog'), [], [], $this->tenantHeaders($tenantId));
     }
 
     // ---- MQTT ingest (embedded broker): credentials, profiles, unregistered devices, device binding ----

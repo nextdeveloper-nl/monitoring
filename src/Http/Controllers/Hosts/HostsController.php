@@ -72,4 +72,17 @@ class HostsController extends AbstractMonitoringController
     {
         return $this->respond(fn () => ['data' => $this->service->testHost($hostId)]);
     }
+
+    /** Which channels would fire for the host and what was delivered for it. Cursor paged. */
+    public function notifications(Request $request, string $hostId): JsonResponse
+    {
+        $filters = $request->validate([
+            'status' => 'sometimes|string|in:pending,delivered,failed,cancelled',
+            'event_type' => 'sometimes|string|max:100',
+            'limit' => 'sometimes|integer|min:1|max:100',
+            'cursor' => 'sometimes|string|max:500',
+        ]);
+
+        return $this->respond(fn () => ['data' => $this->service->hostNotifications($hostId, $filters)]);
+    }
 }
