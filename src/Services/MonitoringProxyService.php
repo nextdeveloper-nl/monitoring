@@ -266,6 +266,9 @@ class MonitoringProxyService
                 'health' => (object) ($x['health'] ?? []),
                 'would_fire' => (bool) ($x['would_fire'] ?? false),
                 'reason' => $x['reason'] ?? null,
+                // false: the route was not made through /monitoring/channels (for example a script with an API key); it still fires
+                'is_channel' => ($x['route_external']['type'] ?? null) === self::CHANNEL_ROUTE_TYPE
+                    || ($x['endpoint']['external']['type'] ?? null) === self::CHANNEL_TYPE,
             ])->values()->all(),
             'deliveries' => collect($r['items'])->map(fn (array $d) => [
                 'id' => $d['id'] ?? null,
@@ -276,6 +279,9 @@ class MonitoringProxyService
                 'route_name' => $d['route_name'] ?? null,
                 'channel_id' => $d['endpoint_id'] ?? null,
                 'channel_name' => $d['endpoint_name'] ?? null,
+                // false: the delivery belongs to a webhook that was not made through /monitoring/channels
+                'is_channel' => ($d['endpoint_external']['type'] ?? null) === self::CHANNEL_TYPE
+                    || ($d['route_external']['type'] ?? null) === self::CHANNEL_ROUTE_TYPE,
                 'status' => $d['status'] ?? null,
                 'attempts' => $d['attempts'] ?? null,
                 'last_status_code' => $d['last_status_code'] ?? null,
