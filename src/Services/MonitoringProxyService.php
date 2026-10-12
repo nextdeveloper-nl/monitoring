@@ -247,8 +247,7 @@ class MonitoringProxyService
         $r = $driver->deviceNotifications($id, $hostId, $filters);
 
         return [
-            // the platform's own channel is not the customer's business
-            'routes' => collect($r['routes'])->reject(fn (array $x) => $this->isDefaultChannel($x['route_external'] ?? null, $x['endpoint']['external'] ?? null))->map(fn (array $x) => [
+            'routes' => collect($r['routes'])->map(fn (array $x) => [
                 'route_id' => $x['route_id'] ?? null,
                 'name' => $x['name'] ?? null,
                 'position' => $x['position'] ?? null,
@@ -269,9 +268,12 @@ class MonitoringProxyService
                 'reason' => $x['reason'] ?? null,
                 // false: the route was not made through /monitoring/channels (for example a script with an API key); it still fires
                 'is_channel' => ($x['route_external']['type'] ?? null) === self::CHANNEL_ROUTE_TYPE
-                    || ($x['endpoint']['external']['type'] ?? null) === self::CHANNEL_TYPE,
+                    || ($x['endpoint']['external']['type'] ?? null) === self::CHANNEL_TYPE
+                    || $this->isDefaultChannel($x['route_external'] ?? null, $x['endpoint']['external'] ?? null),
+                // true: the platform's own channel, shown but not editable
+                'system' => $this->isDefaultChannel($x['route_external'] ?? null, $x['endpoint']['external'] ?? null),
             ])->values()->all(),
-            'deliveries' => collect($r['items'])->reject(fn (array $d) => $this->isDefaultChannel($d['route_external'] ?? null, $d['endpoint_external'] ?? null))->map(fn (array $d) => [
+            'deliveries' => collect($r['items'])->map(fn (array $d) => [
                 'id' => $d['id'] ?? null,
                 'event_type' => $d['event_type'] ?? null,
                 'incident_id' => $d['incident_id'] ?? null,
@@ -282,7 +284,9 @@ class MonitoringProxyService
                 'channel_name' => $d['endpoint_name'] ?? null,
                 // false: the delivery belongs to a webhook that was not made through /monitoring/channels
                 'is_channel' => ($d['endpoint_external']['type'] ?? null) === self::CHANNEL_TYPE
-                    || ($d['route_external']['type'] ?? null) === self::CHANNEL_ROUTE_TYPE,
+                    || ($d['route_external']['type'] ?? null) === self::CHANNEL_ROUTE_TYPE
+                    || $this->isDefaultChannel($d['route_external'] ?? null, $d['endpoint_external'] ?? null),
+                'system' => $this->isDefaultChannel($d['route_external'] ?? null, $d['endpoint_external'] ?? null),
                 'status' => $d['status'] ?? null,
                 'attempts' => $d['attempts'] ?? null,
                 'last_status_code' => $d['last_status_code'] ?? null,
@@ -939,7 +943,7 @@ class MonitoringProxyService
         $routes = $notifications->listAlertRoutes($id)->keyBy(fn (AlertRoute $r) => $r->webhookId);
 
         return $notifications->listWebhooks($id)
-            ->filter(fn (Webhook $w) => $w->externalType === self::CHANNEL_TYPE)
+            ->filter(fn (Webhook $w) => in_array($w->externalType, [self::CHANNEL_TYPE, DefaultChannelService::WEBHOOK_TYPE], true))
             ->map(fn (Webhook $w) => $this->channel($w, $routes->get($w->id)))
             ->values()->all();
     }
@@ -987,6 +991,7 @@ class MonitoringProxyService
         $notifications = $this->notificationsDriver($driver);
 
         $current = $this->findChannelWebhook($notifications, $id, $channelId);
+        $this->assertCustomerChannel($current);
         $route = $notifications->listAlertRoutes($id)->first(fn (AlertRoute $r) => $r->webhookId === $current->id);
 
         if (isset($data['url'])) {
@@ -1027,6 +1032,7 @@ class MonitoringProxyService
         $notifications = $this->notificationsDriver($driver);
 
         $webhook = $this->findChannelWebhook($notifications, $id, $channelId);
+        $this->assertCustomerChannel($webhook);
 
         foreach ($notifications->listAlertRoutes($id)->filter(fn (AlertRoute $r) => $r->webhookId === $webhook->id) as $route) {
             $notifications->deleteAlertRoute($id, $route->id);
@@ -1042,6 +1048,7 @@ class MonitoringProxyService
         $notifications = $this->notificationsDriver($driver);
 
         $webhook = $this->findChannelWebhook($notifications, $id, $channelId);
+        $this->assertCustomerChannel($webhook);
         $result = $notifications->testWebhook($id, $webhook->id);
 
         // The receiver's response body is the customer's own data, but cap it: it can be a whole HTML page.
@@ -1057,6 +1064,7 @@ class MonitoringProxyService
         $notifications = $this->notificationsDriver($driver);
 
         $webhook = $this->findChannelWebhook($notifications, $id, $channelId);
+        $this->assertCustomerChannel($webhook);
 
         return ['secret' => $notifications->rotateWebhookSecret($id, $webhook->id), 'previous_secret_valid_hours' => 24];
     }
@@ -1089,6 +1097,7 @@ class MonitoringProxyService
         $notifications = $this->notificationsDriver($driver);
 
         $webhook = $this->findChannelWebhook($notifications, $id, $channelId);
+        $this->assertCustomerChannel($webhook);
 
         $notifications->replayWebhookDelivery($id, $webhook->id, $deliveryId);
     }
@@ -1129,6 +1138,7 @@ class MonitoringProxyService
         $notifications = $this->notificationsDriver($driver);
 
         $webhook = $this->findChannelWebhook($notifications, $id, $channelId);
+        $this->assertCustomerChannel($webhook);
 
         $notifications->replayWebhookDeliveries($id, $webhook->id, Carbon::parse($from), Carbon::parse($to), $status);
     }
@@ -1176,10 +1186,18 @@ class MonitoringProxyService
         return ($route['type'] ?? null) === DefaultChannelService::ROUTE_TYPE || ($endpoint['type'] ?? null) === DefaultChannelService::WEBHOOK_TYPE;
     }
 
+    /** The platform's own channel can be read but not changed, tested, rotated, replayed or deleted by the customer. */
+    private function assertCustomerChannel(Webhook $webhook): void
+    {
+        if ($webhook->externalType === DefaultChannelService::WEBHOOK_TYPE) {
+            throw new ApiRequestFailed('This is the PlusClouds notification channel; it cannot be changed.', 403, ['type' => 'forbidden', 'detail' => 'System channel']);
+        }
+    }
+
     private function findChannelWebhook(ManagesNotifications $notifications, string $tenantId, string $channelId): Webhook
     {
         $webhook = $notifications->listWebhooks($tenantId)
-            ->first(fn (Webhook $w) => $w->id === $channelId && $w->externalType === self::CHANNEL_TYPE);
+            ->first(fn (Webhook $w) => $w->id === $channelId && in_array($w->externalType, [self::CHANNEL_TYPE, DefaultChannelService::WEBHOOK_TYPE], true));
 
         return $webhook ?? throw new ApiRequestFailed('Channel not found.', 404, ['type' => 'not-found', 'detail' => 'Not found']);
     }
@@ -1214,6 +1232,8 @@ class MonitoringProxyService
             // escalation steps: [{after_seconds, labels, only_if_unacknowledged, schedule}]
             'steps' => $route?->steps ?? [],
             'previous_secret_valid_until' => $w->raw['previous_valid_until'] ?? null,
+            // true: the platform's own channel (it delivers every notification to PlusClouds); it can be seen but not changed
+            'system' => $w->externalType === DefaultChannelService::WEBHOOK_TYPE,
         ];
     }
 

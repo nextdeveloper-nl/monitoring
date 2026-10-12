@@ -557,6 +557,10 @@ Available on checks whose plugin has a `whoopsy_metric` in `GET /plugins` (`http
 - Push checks in the check object: `push` is `null` for polled checks; for a push check it is `{"ingest_path", "ingest_url" (null when the service has no public URL), "token_prefix", "token_created_at", "last_push_at"}`. **`push_token` is returned only in the response to `POST /hosts/{host_id}/checks` that creates a push check and in the response to the rotate call, once and never again** (format `mpush_<8>_<43 base62>`): show it to the user at once, with a copy button and a warning that it cannot be shown again. Never log it.
 - `POST /checks/{check_id}/rotate-token` (operator role): returns the check with a new `push_token`; the old token stops at once. 409 `not-push` for a polled check.
 
+#### The PlusClouds notification channel (system channel)
+
+Every account has one channel made by the platform, named "PlusClouds notifications": it delivers every incident and account-limit event to PlusClouds so the platform can act on it. It appears in `GET /channels` (and in a host's notification view) with **`system: true`**. Show it first, read-only, with a lock and a short explanation ("PlusClouds receives all notifications of your account, so it can act on them"). It cannot be edited, tested, rotated, replayed or deleted: `PATCH`, `DELETE`, `POST .../test`, `.../rotate-secret` and the delivery replays on it answer `403`. `GET /channels/{channel_id}/deliveries` works. It matches everything and runs first without stopping the customer's own channels, so it does not change which of their channels fire. It shows up only after the platform has created it (a new account, or the backfill), so an account without it simply has no `system` channel.
+
 #### Notifications of a host (monitoring service with device notifications; check `GET /tenant` capabilities for `device_notifications`)
 
 Shows, per host, which notification channels would fire and what was delivered, so a customer can see whether their notification triggers work.
