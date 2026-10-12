@@ -389,6 +389,7 @@ A channel is a webhook that receives alerts. The customer's own system gets an H
 | `device_types` | only alerts on these host types; omit for all |
 | `tags` | only alerts on hosts with these tags; omit for all |
 | `site_ids` | only alerts on hosts in these sites; omit for all |
+| `host_ids` | only alerts on these hosts (host ids from `GET /hosts`, up to 100); omit for all. Use it for "tell me when this host opens an alert" |
 | `check_ids` | only alerts of these checks (one alarm to its own channel); omit for all |
 | `event_types` | which events to send: `monitoring.incident.opened`, `.updated`, `.acknowledged`, `.resolved`, `.commented`, and the account limit events `monitoring.tenant.device_limit_reached` and `monitoring.tenant.check_limit_reached`. Default: opened, updated, acknowledged and resolved incidents, and the limit events. A limit event has no host, check or severity, so a channel that filters on `severity`, `device_types`, `tags`, `site_ids` or `check_ids` never receives it: to be told about limits, create a channel with no such filters (or one that names the limit events and nothing else) |
 | `group_by` | send one event for several incidents that share these fields, after `group_wait_seconds`. Allowed: `root_device_id`, `device_id`, `site_id`, `severity`, `check_id`, `plugin`, `device_type`. `["root_device_id"]` turns a switch outage into one message. Empty: every incident on its own |

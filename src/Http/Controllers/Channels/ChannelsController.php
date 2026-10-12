@@ -31,6 +31,9 @@ class ChannelsController extends AbstractMonitoringController
             'tags.*' => 'string|max:200',
             'site_ids' => 'sometimes|array|max:50',
             'site_ids.*' => 'string|max:100',
+            // only these hosts
+            'host_ids' => 'sometimes|array|max:100',
+            'host_ids.*' => 'string|max:100',
             'check_ids' => 'sometimes|array|max:100',
             'check_ids.*' => 'string|max:100',
             'event_types' => 'sometimes|array',
@@ -69,6 +72,9 @@ class ChannelsController extends AbstractMonitoringController
             'tags.*' => 'string|max:200',
             'site_ids' => 'sometimes|array|max:50',
             'site_ids.*' => 'string|max:100',
+            // only these hosts
+            'host_ids' => 'sometimes|array|max:100',
+            'host_ids.*' => 'string|max:100',
             'check_ids' => 'sometimes|array|max:100',
             'check_ids.*' => 'string|max:100',
             'event_types' => 'sometimes|array',

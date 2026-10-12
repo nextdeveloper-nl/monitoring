@@ -1000,7 +1000,7 @@ class MonitoringProxyService
         ));
 
         $match = $route?->match ?? [];
-        foreach (['severity', 'device_types', 'tags', 'site_ids', 'check_ids', 'event_types'] as $key) {
+        foreach (['severity', 'device_types', 'tags', 'site_ids', 'host_ids', 'check_ids', 'event_types'] as $key) {
             if (array_key_exists($key, $data)) {
                 $match = $this->routeMatch([$key => $data[$key]]) + $match;
             }
@@ -1162,6 +1162,8 @@ class MonitoringProxyService
             'device_types' => $data['device_types'] ?? null,
             'tags' => $data['tags'] ?? null,
             'site_ids' => $data['site_ids'] ?? null,
+            // hosts are devices on the monitoring service
+            'device_ids' => $data['host_ids'] ?? null,
             'check_ids' => $data['check_ids'] ?? null,
             'event_types' => $data['event_types'] ?? null,
         ], fn ($v) => $v !== null && $v !== []);
@@ -1194,6 +1196,7 @@ class MonitoringProxyService
             'device_types' => $route?->match['device_types'] ?? [],
             'tags' => $route?->match['tags'] ?? [],
             'site_ids' => $route?->match['site_ids'] ?? [],
+            'host_ids' => $route?->match['device_ids'] ?? [],
             'check_ids' => $route?->match['check_ids'] ?? [],
             'event_types' => $route?->match['event_types'] ?? [],
             // grouping: incidents sharing these fields arrive as one event after group_wait_seconds
