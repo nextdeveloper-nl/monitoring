@@ -13,8 +13,11 @@ use NextDeveloper\Monitoring\Models\MonitoringTenant;
  */
 class NotificationSettingsService
 {
-    /** Defaults for an account that never saved settings: nothing is sent by email and no pusher is triggered. */
-    private const DEFAULTS = ['email' => false, 'pusher_ids' => []];
+    /**
+     * Defaults for an account that never saved settings: owner and managers get the in-app notification (the bell), nothing is
+     * sent by email and no pusher is triggered.
+     */
+    private const DEFAULTS = ['email' => false, 'in_app' => true, 'pusher_ids' => []];
 
     /** The stored settings of an account (by its monitoring tenant's external id). Used by the host application's reactions. */
     public function forAccount(string $accountId): array
@@ -31,6 +34,7 @@ class NotificationSettingsService
 
         return [
             'email' => $settings['email'],
+            'in_app' => $settings['in_app'],
             'pushers' => collect($settings['pusher_ids'])
                 ->map(fn (string $id) => $this->resolver()?->find($id))
                 ->filter()->map(fn (array $p) => ['id' => $p['uuid'], 'name' => $p['name']])->values()->all(),
@@ -38,7 +42,7 @@ class NotificationSettingsService
     }
 
     /**
-     * $data: email (bool), pusher_ids (array of pusher uuids that belong to the current user; replaces the list).
+     * $data: email (bool), in_app (bool), pusher_ids (array of pusher uuids that belong to the current user; replaces the list).
      * Only the keys sent change. Throws a 422 for a pusher that is not the user's.
      */
     public function update(MonitoringTenant $tenant, array $data): array
@@ -47,6 +51,10 @@ class NotificationSettingsService
 
         if (array_key_exists('email', $data)) {
             $settings['email'] = (bool) $data['email'];
+        }
+
+        if (array_key_exists('in_app', $data)) {
+            $settings['in_app'] = (bool) $data['in_app'];
         }
 
         if (array_key_exists('pusher_ids', $data)) {
@@ -74,6 +82,7 @@ class NotificationSettingsService
 
         return [
             'email' => (bool) ($stored['email'] ?? self::DEFAULTS['email']),
+            'in_app' => (bool) ($stored['in_app'] ?? self::DEFAULTS['in_app']),
             'pusher_ids' => array_values((array) ($stored['pusher_ids'] ?? self::DEFAULTS['pusher_ids'])),
         ];
     }

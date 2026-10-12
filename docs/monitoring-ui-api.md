@@ -563,11 +563,11 @@ Available on checks whose plugin has a `whoopsy_metric` in `GET /plugins` (`http
 
 Besides channels, an account chooses what the platform does with its monitoring notifications. Both are **off by default**: no email is sent and no pusher is triggered until the customer turns them on.
 
-- `GET /notification-settings` (all roles): `{email: bool, pushers: [{id, name}]}`.
-- `PATCH /notification-settings` (manager role): `{email?: bool, pusher_ids?: [uuid]}`. Only the keys sent change; `pusher_ids` replaces the list (max 20). A pusher that is not the user's gets `422`.
+- `GET /notification-settings` (all roles): `{email: bool, in_app: bool, pushers: [{id, name}]}`.
+- `PATCH /notification-settings` (manager role): `{email?: bool, in_app?: bool, pusher_ids?: [uuid]}`. Only the keys sent change; `pusher_ids` replaces the list (max 20). A pusher that is not the user's gets `422`.
 - `email` true: the account owner and the users with the monitoring-manager role get an email for every incident event (opened, updated, acknowledged, resolved, commented). Account limit events are not mailed. Add a clear warning that this can be many emails and suggest a quiet start (use channels with severity filters for the rest).
 - `pusher_ids`: pushers the customer made in Settings > Pushers. Each notification is sent to them (a webhook-style delivery of the notification as JSON, plus the account). Show a picker of the account's own pushers (the platform's pushers API lists them) and save the selected ids here.
-- Notifications are also shown in the panel's notification bell for the owner and managers; there is no switch for that.
+- `in_app` (default **true**): the account owner and the monitoring managers get a notification in the panel's bell for every incident event and limit event. This can be a lot on a busy account, so give it a switch next to the email one and say so; turning it off stops only the bell, not channels, email or pushers.
 
 #### Notification rules: when this notification arrives, trigger this pusher
 

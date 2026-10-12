@@ -44,24 +44,35 @@ class NotificationSettingsServiceTest extends TestCase
     {
         $service = app(NotificationSettingsService::class);
 
-        $this->assertSame(['email' => false, 'pusher_ids' => []], $service->forAccount('acc-1'));
-        $this->assertSame(['email' => false, 'pushers' => []], $service->show($this->tenant));
-        $this->assertSame(['email' => false, 'pusher_ids' => []], $service->forAccount('unknown'));
+        $this->assertSame(['email' => false, 'in_app' => true, 'pusher_ids' => []], $service->forAccount('acc-1'));
+        $this->assertSame(['email' => false, 'in_app' => true, 'pushers' => []], $service->show($this->tenant));
+        $this->assertSame(['email' => false, 'in_app' => true, 'pusher_ids' => []], $service->forAccount('unknown'));
     }
 
     public function test_email_and_own_pushers_are_saved_per_account_and_other_meta_is_kept(): void
     {
         $service = app(NotificationSettingsService::class);
 
-        $shown = $service->update($this->tenant, ['email' => true, 'pusher_ids' => ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']]);
+        $shown = $service->update($this->tenant, ['email' => true, 'in_app' => true, 'pusher_ids' => ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']]);
 
-        $this->assertSame(['email' => true, 'pushers' => [['id' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'name' => 'My pusher']]], $shown);
-        $this->assertSame(['email' => true, 'pusher_ids' => ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']], $service->forAccount('acc-1'));
+        $this->assertSame(['email' => true, 'in_app' => true, 'pushers' => [['id' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'name' => 'My pusher']]], $shown);
+        $this->assertSame(['email' => true, 'in_app' => true, 'pusher_ids' => ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']], $service->forAccount('acc-1'));
         $this->assertSame('w', $this->tenant->fresh()->meta['default_channel']['webhook_id']);
 
         // a partial update leaves the other key alone
         $service->update($this->tenant->fresh(), ['email' => false]);
-        $this->assertSame(['email' => false, 'pusher_ids' => ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']], $service->forAccount('acc-1'));
+        $this->assertSame(['email' => false, 'in_app' => true, 'pusher_ids' => ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']], $service->forAccount('acc-1'));
+    }
+
+    public function test_in_app_is_on_by_default_and_can_be_switched_off_per_account(): void
+    {
+        $service = app(NotificationSettingsService::class);
+
+        $this->assertTrue($service->forAccount('acc-1')['in_app']);
+
+        $this->assertFalse($service->update($this->tenant, ['in_app' => false])['in_app']);
+        $this->assertFalse($service->forAccount('acc-1')['in_app']);
+        $this->assertTrue($service->forAccount('unknown')['in_app']);
     }
 
     public function test_another_accounts_pusher_is_refused(): void

@@ -24,6 +24,7 @@ class TenantController extends AbstractMonitoringController
     {
         $data = $request->validate([
             'email' => 'sometimes|boolean',
+            'in_app' => 'sometimes|boolean',
             'pusher_ids' => 'sometimes|array|max:20',
             'pusher_ids.*' => 'string|uuid',
         ]);
