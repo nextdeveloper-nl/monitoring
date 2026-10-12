@@ -9,6 +9,14 @@ namespace NextDeveloper\Monitoring\Contracts;
  */
 interface ResolvesPushers
 {
-    /** @return array{uuid: string, name: string}|null null when the pusher does not exist or is not the current user's. */
+    /** @return array{id: int, uuid: string, name: string}|null null when the pusher does not exist or is not the current user's. `id` is the pusher's internal id. */
     public function find(string $pusherId): ?array;
+
+    /**
+     * Describes pushers by internal id, without the current user's restriction (used to show a rule's pusher and to trigger it).
+     *
+     * @param  int[] $ids
+     * @return array<int, array{id: int, uuid: string, name: string, iam_account_id: int|null}> keyed by id
+     */
+    public function describe(array $ids): array;
 }

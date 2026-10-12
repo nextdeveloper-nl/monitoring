@@ -569,6 +569,21 @@ Besides channels, an account chooses what the platform does with its monitoring 
 - `pusher_ids`: pushers the customer made in Settings > Pushers. Each notification is sent to them (a webhook-style delivery of the notification as JSON, plus the account). Show a picker of the account's own pushers (the platform's pushers API lists them) and save the selected ids here.
 - Notifications are also shown in the panel's notification bell for the owner and managers; there is no switch for that.
 
+#### Notification rules: when this notification arrives, trigger this pusher
+
+A rule says "when a monitoring notification like this arrives for the account, trigger this pusher". An account can have up to 50. This is the way to do "when Whoopsy! raises an alert, trigger pusher X"; it replaces `pusher_ids` in the notification settings (which sends every event to the pushers listed and stays for now; prefer rules).
+
+- `GET /notification-rules` (all roles) returns `data` as a list; `GET /notification-rules/{rule_id}` one rule. `POST /notification-rules` (manager role, `201`), `PATCH /notification-rules/{rule_id}` (manager), `DELETE /notification-rules/{rule_id}` (manager, `204`). A rule not of this account gives `404`.
+- A rule: `{rule_id, name, enabled, event_types [], severities [], alert_kinds [], host_ids [], pusher {id, name} or null, last_triggered_at, trigger_count, created_at}`. `pusher` is null when the pusher was deleted since; the rule then does nothing: show it as broken.
+- `POST` body: `name` and `pusher_id` (a uuid of one of the user's pushers) are required; `enabled` (default true), `event_types`, `severities`, `alert_kinds`, `host_ids` are optional. `PATCH` takes any of them; a list sent replaces the whole list. A pusher that is not the user's, or a value outside the lists below, gives `422`.
+- **Filters are combined with AND; an empty list means any.**
+  - `event_types`: `monitoring.incident.opened`, `.updated`, `.acknowledged`, `.resolved`, `.commented`, `monitoring.tenant.device_limit_reached`, `monitoring.tenant.check_limit_reached` (the catalog `GET /notification-catalog` explains each with an example).
+  - `severities`: `warning`, `critical`. A limit event has no severity, so a rule with `severities` never matches it.
+  - `alert_kinds`: `whoopsy` (a Whoopsy! band alert), `threshold` (a threshold rule of the check), `check_failure` (the check itself failed). A limit event has none, so a rule with `alert_kinds` never matches it.
+  - `host_ids`: only incidents on these hosts (ids from `GET /hosts`, up to 100).
+- Every matching rule fires; a pusher named by several matching rules is triggered once. The pusher gets the notification as JSON (a CloudEvents object) plus an `account` block, as described under the notification settings.
+- Suggested UI: a "Notification rules" list with an on/off switch per rule and a plain sentence for each ("When a **Whoopsy!** alert **opens** on **any host**, trigger **My pusher**"); a form with the filters as multi-selects and the account's pushers as the target (link to Settings > Pushers to create one); show `last_triggered_at` and `trigger_count` so the customer can see that a rule works.
+
 #### The PlusClouds notification channel (system channel)
 
 Every account has one channel made by the platform, named "PlusClouds notifications": it delivers every incident and account-limit event to PlusClouds so the platform can act on it. It appears in `GET /channels` (and in a host's notification view) with **`system: true`**. Show it first, read-only, with a lock and a short explanation ("PlusClouds receives all notifications of your account, so it can act on them"). It cannot be edited, tested, rotated, replayed or deleted: `PATCH`, `DELETE`, `POST .../test`, `.../rotate-secret` and the delivery replays on it answer `403`. `GET /channels/{channel_id}/deliveries` works. It matches everything and runs first without stopping the customer's own channels, so it does not change which of their channels fire. It shows up only after the platform has created it (a new account, or the backfill), so an account without it simply has no `system` channel.

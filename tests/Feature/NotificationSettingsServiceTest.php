@@ -30,7 +30,12 @@ class NotificationSettingsServiceTest extends TestCase
         $this->app->bind(ResolvesPushers::class, fn () => new class implements ResolvesPushers {
             public function find(string $pusherId): ?array
             {
-                return $pusherId === 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' ? ['uuid' => $pusherId, 'name' => 'My pusher'] : null;
+                return $pusherId === 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' ? ['id' => 7, 'uuid' => $pusherId, 'name' => 'My pusher'] : null;
+            }
+
+            public function describe(array $ids): array
+            {
+                return [];
             }
         });
     }

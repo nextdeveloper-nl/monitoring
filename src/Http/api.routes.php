@@ -10,6 +10,17 @@ Route::prefix('monitoring')->group(
     function () {
         Route::get('tenant', 'Tenant\TenantController@show');
         // email on/off and the pushers triggered for the account's notifications
+        // rules: "when a notification like this arrives, trigger this pusher"
+        Route::prefix('notification-rules')->group(
+            function () {
+                Route::get('/', 'NotificationRules\NotificationRulesController@index');
+                Route::post('/', 'NotificationRules\NotificationRulesController@store');
+
+                Route::get('{rule_id}', 'NotificationRules\NotificationRulesController@show');
+                Route::patch('{rule_id}', 'NotificationRules\NotificationRulesController@update');
+                Route::delete('{rule_id}', 'NotificationRules\NotificationRulesController@destroy');
+            }
+        );
         Route::get('notification-settings', 'Tenant\TenantController@notificationSettings');
         Route::patch('notification-settings', 'Tenant\TenantController@updateNotificationSettings');
         Route::get('plugins', 'Plugins\PluginsController@index');
