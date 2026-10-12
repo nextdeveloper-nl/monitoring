@@ -67,6 +67,8 @@ class MonitoringAdminRole extends AbstractRole implements IAuthorizationRole
             'monitoring_channels:read',
             'monitoring_sites:read',
             'monitoring_notification_catalog:read',
+            'monitoring_notification_settings:read',
+            'monitoring_notification_settings:update',
             'monitoring_hosts:create',
             'monitoring_hosts:update',
             'monitoring_hosts:delete',

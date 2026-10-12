@@ -9,6 +9,9 @@
 Route::prefix('monitoring')->group(
     function () {
         Route::get('tenant', 'Tenant\TenantController@show');
+        // email on/off and the pushers triggered for the account's notifications
+        Route::get('notification-settings', 'Tenant\TenantController@notificationSettings');
+        Route::patch('notification-settings', 'Tenant\TenantController@updateNotificationSettings');
         Route::get('plugins', 'Plugins\PluginsController@index');
 
         Route::get('credential-types', 'Credentials\CredentialsController@types');

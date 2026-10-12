@@ -559,6 +559,16 @@ Available on checks whose plugin has a `whoopsy_metric` in `GET /plugins` (`http
 - Push checks in the check object: `push` is `null` for polled checks; for a push check it is `{"ingest_path", "ingest_url" (null when the service has no public URL), "token_prefix", "token_created_at", "last_push_at"}`. **`push_token` is returned only in the response to `POST /hosts/{host_id}/checks` that creates a push check and in the response to the rotate call, once and never again** (format `mpush_<8>_<43 base62>`): show it to the user at once, with a copy button and a warning that it cannot be shown again. Never log it.
 - `POST /checks/{check_id}/rotate-token` (operator role): returns the check with a new `push_token`; the old token stops at once. 409 `not-push` for a polled check.
 
+#### Notification settings: email and pushers (per account)
+
+Besides channels, an account chooses what the platform does with its monitoring notifications. Both are **off by default**: no email is sent and no pusher is triggered until the customer turns them on.
+
+- `GET /notification-settings` (all roles): `{email: bool, pushers: [{id, name}]}`.
+- `PATCH /notification-settings` (manager role): `{email?: bool, pusher_ids?: [uuid]}`. Only the keys sent change; `pusher_ids` replaces the list (max 20). A pusher that is not the user's gets `422`.
+- `email` true: the account owner and the users with the monitoring-manager role get an email for every incident event (opened, updated, acknowledged, resolved, commented). Account limit events are not mailed. Add a clear warning that this can be many emails and suggest a quiet start (use channels with severity filters for the rest).
+- `pusher_ids`: pushers the customer made in Settings > Pushers. Each notification is sent to them (a webhook-style delivery of the notification as JSON, plus the account). Show a picker of the account's own pushers (the platform's pushers API lists them) and save the selected ids here.
+- Notifications are also shown in the panel's notification bell for the owner and managers; there is no switch for that.
+
 #### The PlusClouds notification channel (system channel)
 
 Every account has one channel made by the platform, named "PlusClouds notifications": it delivers every incident and account-limit event to PlusClouds so the platform can act on it. It appears in `GET /channels` (and in a host's notification view) with **`system: true`**. Show it first, read-only, with a lock and a short explanation ("PlusClouds receives all notifications of your account, so it can act on them"). It cannot be edited, tested, rotated, replayed or deleted: `PATCH`, `DELETE`, `POST .../test`, `.../rotate-secret` and the delivery replays on it answer `403`. `GET /channels/{channel_id}/deliveries` works. It matches everything and runs first without stopping the customer's own channels, so it does not change which of their channels fire. It shows up only after the platform has created it (a new account, or the backfill), so an account without it simply has no `system` channel.

@@ -72,6 +72,18 @@ class MonitoringProxyService
         );
     }
 
+    /** What the platform does with this account's notifications besides its channels: email (on/off) and the pushers it triggers. */
+    public function notificationSettings(): array
+    {
+        return app(NotificationSettingsService::class)->show($this->verifiedTenant());
+    }
+
+    /** $data: email (bool), pusher_ids (pusher uuids of the current user). Only the keys sent change. */
+    public function updateNotificationSettings(array $data): array
+    {
+        return app(NotificationSettingsService::class)->update($this->verifiedTenant(), $data);
+    }
+
     public function tenantInfo(): array
     {
         $tenant = $this->verifiedTenant();
